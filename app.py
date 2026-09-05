@@ -28,10 +28,11 @@ html, body, .stApp, [class*="css"] {
   background: #0e1117; color: #e8eaed;
 }
 h1, h2, h3 { color: #f5c518 !important; text-align: right; }
-.big-letter { font-size: 72px; font-weight: 700; color: #1db954; text-align: center; }
-.big-letter-unknown { font-size: 54px; font-weight: 700; color: #ff9f43; text-align: center; }
+.big-letter { font-size: 72px; font-weight: 700; color: #1db954; text-align: center; min-height: 78px; line-height: 78px; }
+.big-letter-unknown { font-size: 54px; font-weight: 700; color: #ff9f43; text-align: center; min-height: 78px; line-height: 78px; }
 .word-line { font-size: 30px; color: #ffffff; text-align: center; direction: rtl; }
 .word-line .raw { color: #9aa4b5; font-size: 22px; }
+.meta { color: #9aa4b5; text-align: center; min-height: 20px; }
 
 .dict-card {
   background: linear-gradient(180deg, #1c2230, #161b25);
@@ -68,7 +69,8 @@ h1, h2, h3 { color: #f5c518 !important; text-align: right; }
 .badge-hand-wait { background: #2a3040; color: #9aa4b5; font-size: 14px; }
 
 .conf-wrap { background: #2a3040; border-radius: 999px; height: 10px; width: 100%; margin: 8px auto 0; max-width: 340px; }
-.conf-fill { height: 10px; border-radius: 999px; background: linear-gradient(90deg, #1db954, #f5c518); }
+.conf-fill { height: 10px; border-radius: 999px; background: linear-gradient(90deg, #1db954, #f5c518); transition: width .12s ease-out, opacity .12s ease-out; }
+.badge, .big-letter, .big-letter-unknown { transition: opacity .12s ease-out; }
 .meta { color: #9aa4b5; text-align: center; }
 </style>
 """
