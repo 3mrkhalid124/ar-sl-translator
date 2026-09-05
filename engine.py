@@ -58,10 +58,21 @@ EXPECTED_IMAGES = 54049
 EXPECTED_CLASSES = 32
 IMG_SIZE = 64
 
-CONF_THRESHOLD = 0.85
-DEBOUNCE_FRAMES = 3
+CONF_THRESHOLD = 0.90  # Priority 1: 0.85 → 0.90 (يخفف false positives مع التحقق الهندسي)
+DEBOUNCE_FRAMES = 5  # Priority 1: 3 → 5
 SILENCE_SECONDS = 2.5
 MAX_WORD_LEN = 40
+
+# أنماط الأصابع (مراسي مؤكدة من الصور المرجعية الحقيقية في assets/dict/ — بلا افتراض إضافي):
+#   fingers: عدد الأصابع الأربعة الممدودة المتوقع أو None بلا قيد
+#   thumb:   "fold"/"ext"/"any" أو None بلا قيد
+#   القاعدة في validate_geometry: فرق عدد أصابع ≥ 2 يُرفض؛ تعارض إبهام وحده لا يُرفض.
+SIGNPAT = {
+    7: {"fingers": 0, "thumb": "ext"},   # فاء: قبضة + إبهام جانبي
+    21: {"fingers": 4, "thumb": "ext"},  # سين: كف مفتوح (4 أصابع + إبهام)
+    25: {"fingers": 3, "thumb": "fold"}, # ثاء: W — سبابة+وسطى+بنصر ممدودة، إبهام وخنصر مطويان
+    30: {"fingers": 1, "thumb": "fold"}, # ياء: سبابة لأعلى والباقي قبضة
+}
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "allam-2-7b"  # عربي-مختص (بديل llama-3.3-70b-versatile الذي أزيل من الكتالوج 2026)
@@ -416,6 +427,53 @@ def detect_hand(frame, ts_ms: int):
     return result.hand_landmarks[0] if result and result.hand_landmarks else []
 
 
+# فهارس مفاصل اليد (MediaPipe)
+_LM = {"wrist": 0, "thumb_mcp": 2, "thumb_ip": 3, "thumb_tip": 4,
+       "index_mcp": 5, "index_pip": 6, "index_tip": 8,
+       "middle_pip": 10, "middle_tip": 12,
+       "ring_pip": 14, "ring_tip": 16,
+       "pinky_pip": 18, "pinky_tip": 20}
+_FINGER_LINKS = [  # (pip, tip) لكل إصبع بترتيب: سبابة/وسطى/بنصر/خنصر
+    (_LM["index_pip"], _LM["index_tip"]),
+    (_LM["middle_pip"], _LM["middle_tip"]),
+    (_LM["ring_pip"], _LM["ring_tip"]),
+    (_LM["pinky_pip"], _LM["pinky_tip"]),
+]
+
+
+def finger_features(landmarks):
+    """ميزات هندسية من 21 نقطة: أصابع الأربعة ممدودة + الإبهام + العدد.
+    القاعدة: الإصبع ممدود إذا كان طرفه أبعد من المعصم من مفصل PIP (بهامش 1.1×)."""
+    pts = np.array([[lm.x, lm.y] for lm in landmarks], dtype=np.float32)
+    wrist = pts[_LM["wrist"]]
+    def _dist(a, b):
+        return float(np.hypot(*(a - b)))
+    fingers = [bool(_dist(pts[t], wrist) > _dist(pts[p], wrist) * 1.1) for p, t in _FINGER_LINKS]
+    thumb = bool(_dist(pts[_LM["thumb_tip"]], wrist) > _dist(pts[_LM["thumb_ip"]], wrist) * 1.1)
+    return {"fingers": fingers, "thumb": thumb, "num_ext": sum(fingers)}
+
+
+def validate_geometry(landmarks, cls_idx: int):
+    """طبقة التحقق الهندسي (Priority 1): إن كان للنمط المعلوم للصنف قيد، نعبّر رفضاً عن تعارضٍ
+    واضح بين الهندسة وتصنيف CNN (فرق عدد الأصابع ≥ 2 أو تعارض إبهام حاسم) → 'غير معروف'.
+    الأصناف بلا نمط معروف تُقبل (لا نقيّد بما لا نعرفه)."""
+    if cls_idx not in SIGNPAT:
+        return True
+    rule = SIGNPAT[cls_idx]
+    if not rule:
+        return True
+    f = finger_features(landmarks)
+    ok_fingers = rule.get("fingers") is None or abs(f["num_ext"] - rule["fingers"]) <= 1
+    ok_thumb = rule.get("thumb") is None or rule["thumb"] == "any" or rule["thumb"] == f["thumb"]
+    if not ok_fingers and not ok_thumb:
+        return False
+    if not ok_fingers:
+        return False
+    if not ok_thumb and abs(f["num_ext"] - rule.get("fingers", f["num_ext"])) >= 2:
+        return False
+    return True
+
+
 def crop_hand_patch(frame, landmarks, pad: float = HAND_PAD):
     """قص مربع حول اليد → رمادي (64,64) float في [0,1] + bbox (x0,y0,x1,y1).
     طبيعية القطبية: إن كانت الخلفية أفتح من اليد تُعكس الصورة (مطابقة لـ ArASL)."""
@@ -444,25 +502,35 @@ def crop_hand_patch(frame, landmarks, pad: float = HAND_PAD):
 
 def process_frame(frame, ts_ms: int):
     """M4: إطار → (overlay_frame, result)
-    result: {hand, idx, label, label_en, conf, bbox} — ما يستهلكه تبويب Streamlit."""
+    result: {hand, unknown, idx, label, label_en, conf, bbox}.
+    Priority 1: لو رفض التحقق الهندسي تصنيف CNN → 'غير معروف' (idx=None, conf=0) بدل تثبيت حرف غلط."""
     overlay = frame.copy()
-    result = {"hand": False, "idx": None, "label": None, "label_en": None,
-              "conf": 0.0, "bbox": None}
+    result = {"hand": False, "unknown": False, "idx": None, "label": None,
+              "label_en": None, "conf": 0.0, "bbox": None}
     landmarks = detect_hand(frame, ts_ms)
     if landmarks:
         result["hand"] = True
         patch, bbox = crop_hand_patch(frame, landmarks)
         if patch is not None:
             idx, conf = classify(patch)
-            result.update(idx=idx, label=CLASS_NAMES[idx], label_en=ENG_LABELS[idx],
+            if not validate_geometry(landmarks, idx):
+                idx, conf = None, 0.0
+                result["unknown"] = True
+            result.update(idx=idx, label=None if idx is None else CLASS_NAMES[idx],
+                          label_en=None if idx is None else ENG_LABELS[idx],
                           conf=conf, bbox=bbox)
             h, w = frame.shape[:2]
             for lm in landmarks:
                 cv2.circle(overlay, (int(lm.x * w), int(lm.y * h)), 3, (0, 255, 0), -1)
             x0, y0, x1, y1 = bbox
-            cv2.rectangle(overlay, (x0, y0), (x1, y1), (0, 255, 0), 2)
-            cv2.putText(overlay, f"{result['label_en']} {conf:.2f}", (x0, max(16, y0 - 8)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            if result["unknown"]:
+                cv2.rectangle(overlay, (x0, y0), (x1, y1), (0, 215, 255), 2)
+                cv2.putText(overlay, "غير معروف / مش واضح", (x0, max(16, y0 - 8)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 215, 255), 2)
+            else:
+                cv2.rectangle(overlay, (x0, y0), (x1, y1), (0, 255, 0), 2)
+                cv2.putText(overlay, f"{result['label_en']} {conf:.2f}", (x0, max(16, y0 - 8)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
     return overlay, result
 
 
@@ -533,6 +601,13 @@ class SignSequencer:
                 self._committed_idx = idx
                 self._votes[idx] = 0
             events["word"] = "".join(CLASS_SYMS[i] for i in self.word)
+        elif hand_seen:
+            # Priority 1 — يد مرئية بلا تصنيف (رفض هندسي → 'غير معروف'): تُحدَّث last_hand_time فقط،
+            # تُصفَّر الأصوات، بلا التزام حرف وبلا إنهاء كلمة مبكر حتى تختفي اليد أو يتوضح الوضع.
+            self.last_hand_time = ts
+            self._votes = {}
+            self._last_idx = None
+            return events
         else:
             self._last_idx = None
             self._committed_idx = None
@@ -681,6 +756,51 @@ def run_selftest() -> int:
     check("seq.second_letter", ev["word"] == CLASS_SYMS[2] + CLASS_SYMS[3])
     ev = seq.feed(False, None, 0.0, 5.00)
     check("seq.finalize", ev["finalized"] == CLASS_SYMS[2] + CLASS_SYMS[3])
+
+    # ---- Priority 1: طبقة التحقق الهندسي (الأوضاع الأربعة المؤكدة) ----
+    def _mk_lm(fingers=(0, 0, 0, 0), thumb=False):
+        """21 نقطة (x,y) بمسافات صريحة تصدق قاعدة عدّ الأصابع؛ المعصم (0.5, 0.85)."""
+        pts = {0: (0.50, 0.85)}
+        for k, ext in enumerate(fingers):
+            b = 0.62 - 0.05 * k          # قاعدة الإصبع
+            m = 5 + 4 * k                # فهرس MCP
+            for i, y in ((m, b + 0.06), (m + 1, b), (m + 3, b - 0.30 if ext else b + 0.04)):
+                pts[i] = (0.50, y)
+        pts[2] = (0.50, 0.61)
+        pts[3] = (0.50, 0.55)
+        pts[4] = (0.72, 0.45) if thumb else (0.50, 0.59)
+        return [type("LM", (), {"x": x, "y": y})() for i in range(21)
+                for x, y in [pts.get(i, (0.5 - i * 0.005, 0.6 - i * 0.005))]]
+
+    iu = _mk_lm((1, 0, 0, 0), thumb=False)   # سبابة لأعلى → ياء (30)
+    op = _mk_lm((1, 1, 1, 1), thumb=True)    # كف مفتوح → سين (21)
+    ft = _mk_lm((0, 0, 0, 0), thumb=True)    # قبضة + إبهام جانبي → فاء (7)
+    w3 = _mk_lm((1, 1, 1, 0), thumb=False)   # W ثلاث أصابع → ثاء (25)
+    fi_iu, fi_op, fi_ft, fi_w3 = (finger_features(x) for x in (iu, op, ft, w3))
+    check("geo.features.counts",
+          (fi_iu["num_ext"] == 1 and fi_iu["thumb"] is False and
+           fi_op["num_ext"] == 4 and fi_op["thumb"] is True and
+           fi_ft["num_ext"] == 0 and fi_ft["thumb"] is True and
+           fi_w3["num_ext"] == 3 and fi_w3["thumb"] is False))
+    check("geo.yyaa.index_up.accept", validate_geometry(iu, 30) is True)
+    check("geo.seen_on_index.reject", validate_geometry(iu, 21) is False)
+    check("geo.seen.palm.accept", validate_geometry(op, 21) is True)
+    check("geo.thaaw_on_palm.tolerated", validate_geometry(op, 25) is True)  # فرق 1 ضمن التسامح
+    check("geo.yyaa_on_palm.reject", validate_geometry(op, 30) is False)     # فرق 3 → رفض
+    check("geo.faa.fist_thumb.accept", validate_geometry(ft, 7) is True)
+    check("geo.seen_on_fist.reject", validate_geometry(ft, 21) is False)
+    check("geo.thaaw.accept", validate_geometry(w3, 25) is True)
+    check("geo.yyaa_on_w.reject", validate_geometry(w3, 30) is False)
+    check("geo.unanchored.pass", validate_geometry(w3, 22) is True)  # شين بلا مرساة → لا رفض زائد
+
+    seq2 = SignSequencer(conf_threshold=0.0, debounce=3, silence_seconds=1.0)
+    seq2.feed(True, 2, 1.0, 0.10); seq2.feed(True, 2, 1.0, 0.20)
+    seq2.feed(True, 2, 1.0, 0.30)
+    ev = seq2.feed(True, None, 0.0, 5.00)    # يد مستمرة بلا تصنيف زمناً طويلاً
+    check("seq.unknown.holds_word", ev["committed"] is None and ev["finalized"] is None
+          and ev["word"] == CLASS_SYMS[2])
+    ev = seq2.feed(False, None, 0.0, 7.00)   # اليد اختفت → إنهاء بعد الصمت
+    check("seq.unknown.then_finalize", ev["finalized"] == CLASS_SYMS[2])
 
     check("groq.key", bool(_load_groq_key()))  # متاح أم لا — معلومة فقط
     check("tts.internet", synthesize_speech("اختبار") is not None)  # إنترنت؛ قابلة للفشل المسموح
