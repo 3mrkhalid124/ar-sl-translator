@@ -461,8 +461,8 @@ _FINGER_LINKS = [  # (pip, tip) لكل إصبع بترتيب: سبابة/وسط�
 def finger_features(landmarks):
     """ميزات هندسية من 21 نقطة: أصابع الأربعة ممدودة + الإبهام + العدد.
     القاعدة: الإصبع ممدود إذا كان طرفه أبعد من المعصم من مفصل PIP (بهامش 1.1×).
-    لا نقاط → أصفار (لا معلومات هندسية)."""
-    if not landmarks:
+    لا نقاط/أقل من 21 → أصفار (لا معلومات هندسية)."""
+    if not landmarks or len(landmarks) < 21:
         return {"fingers": [False, False, False, False], "thumb": False, "num_ext": 0}
     pts = np.array([[lm.x, lm.y] for lm in landmarks], dtype=np.float32)
     wrist = pts[_LM["wrist"]]
@@ -843,6 +843,55 @@ def run_selftest() -> int:
 
     check("groq.key", bool(_load_groq_key()))  # متاح أم لا — معلومة فقط
     check("tts.internet", synthesize_speech("اختبار") is not None)  # إنترنت؛ قابلة للفشل المسموح
+
+    # ---- Polish2: حواف + انقطاع مفاجئ (محاكاة منفصلة بلا إنترنت حقيقي) ----
+    _, rn = process_frame(None, 1)
+    check("frame.empty.none", rn["hand"] is False)
+    p_empty = LivePipeline().update(None)
+    check("pipeline.empty_frame", p_empty["error"] is None and p_empty["hand"] is False
+          and p_empty["word"] == "")
+
+    e_lm = [type("LM", (), {"x": 0.01 + (i / 21) * 0.07, "y": 0.02 + ((i % 5) / 5) * 0.10})
+            for i in range(21)]  # يد جزئية قرب زاوية الفريم
+    e_patch, e_bbox = crop_hand_patch(black, e_lm)
+    check("edge.hand.bbox", e_patch is not None and e_bbox is not None
+          and e_bbox[0] >= 0 and e_bbox[2] <= 640 and e_bbox[3] <= 480)
+    short = [e_lm[0]] * 5
+    check("edge.short.landmarks", validate_geometry(short, 7) is True
+          and finger_features(short)["num_ext"] == 0)
+
+    _orig_post = requests.post
+    try:
+        requests.post = lambda *a, **k: (_ for _ in ()).throw(
+            requests.exceptions.ConnectionError("محاكاة انقطاع الشبكة"))
+        r_off = correct_word("سلم")
+        check("groq.fallback.offline", r_off["source"] == "raw" and r_off["text"] == "سلم")
+    finally:
+        requests.post = _orig_post
+
+    class _FakeResp401:
+        def raise_for_status(self):
+            raise requests.exceptions.HTTPError("401 unauthorized (مفتاح خاطئ)")
+        def json(self):
+            return {}
+
+    _orig_post2 = requests.post
+    try:
+        requests.post = lambda *a, **k: _FakeResp401()
+        r_bad = correct_word("سلم")
+        check("groq.fallback.bad_key", r_bad["source"] == "raw" and r_bad["api"] is False)
+    finally:
+        requests.post = _orig_post2
+
+    try:
+        import gtts
+        _orig_w = gtts.gTTS.write_to_fp
+        def _boom(_self, _fp):
+            raise OSError("محاكاة انقطاع gTTS")
+        gtts.gTTS.write_to_fp = _boom
+        check("tts.fallback.offline", synthesize_speech("اختبار") is None)
+    finally:
+        gtts.gTTS.write_to_fp = _orig_w
 
     try:
         import mediapipe as mp

@@ -425,6 +425,18 @@ def en_checks(check) -> None:
     ev = seq.feed(False, None, 0.0, 7.00)         # اختفاء اليد → إنهاء بعد الصمت
     check("en.seq.finalize", ev["finalized"] == "ABC")
 
+    _, res_en = process_frame_en(None, 1)
+    check("en.frame.empty", res_en["hand"] is False)
+    out_en0 = LivePipelineEN().update(None)
+    check("en.pipeline.empty_frame", out_en0["error"] is None and out_en0["hand"] is False)
+
+    seq_ar2 = ar.SignSequencer(conf_threshold=0.0, debounce=3, silence_seconds=1.0)
+    seq_ar2.feed(True, 30, 1.0, 0.10); seq_ar2.feed(True, 30, 1.0, 0.20)
+    ev_ar = seq_ar2.feed(True, 30, 1.0, 0.30)
+    check("switch.ar_active", ev_ar["word"] == ar.CLASS_SYMS[30])
+    check("switch.no_crosstalk", ar.SignSequencer(conf_threshold=0.0, debounce=3, silence_seconds=1.0).word == []
+          and SignSequencerEN(conf_threshold=0.0, debounce=3, silence_seconds=1.0).word == [])
+
 
 # ---------------------------------------------------------------- CLI
 
