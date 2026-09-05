@@ -359,6 +359,15 @@ with tab_live:
         if has_key is False:
             st.info(tr("Set GROQ_API_KEY in .env to auto-correct text",
                        "أضف مفتاح Groq في .env ليُصحَّح النص تلقائياً"), icon="\U0001F511")
+        st.checkbox(tr("🔧 Debug diagnostics", "🔧 معلومات تشخيصية"), key="dbg_show")
+
+    if st.session_state.get("dbg_show"):
+        _dl = "English" if IS_EN else "عربي"
+        st.markdown(
+            f"<div class='meta' style='text-align:center; color:#9aa4b5'>"
+            f"🔧 {tr('language', 'اللغة')}: <b>{_dl}</b> · "
+            f"{tr('checkpoint', 'النموذج')}: <b>{_PCMODEL.name}</b></div>",
+            unsafe_allow_html=True)
 
     cam_col, res_col = st.columns([3, 4])
     with cam_col:
