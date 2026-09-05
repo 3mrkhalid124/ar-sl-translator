@@ -70,6 +70,7 @@ def load_en_dataset(force_rebuild: bool = False):
 
 
 def _read_mnist_csv(path: Path):
+    """CSV خام (28×28) → (x, كثافة 0..23) (يزيل فجوة J)."""
     import pandas as pd
     df = pd.read_csv(path)
     y = df["label"].to_numpy(dtype=np.int64)
@@ -138,6 +139,7 @@ def _write_dict_en(images, labels) -> None:
 
 
 def _write_class_map_en() -> None:
+    """يكتب class_map_en.json (حرف EN لكل صنف كثيف) — يُقرأ في تبويب القاموس الإنجليزي."""
     MODELS_DIR.mkdir(exist_ok=True)
     CLASS_MAP_EN_PATH.write_text(
         json.dumps({str(i): {"sym": CLASS_EN_SYMS[i], "name": CLASS_EN_NAMES[i]}
@@ -315,6 +317,7 @@ class SignSequencerEN:
         self.finalized_word = None
 
     def feed(self, hand_seen: bool, idx=None, conf=0.0, ts=0.0):
+        """إطار واحد: يصرّف التزام/كلمة/إنهاء، ويعيد events (committed/word/finalized)."""
         events = {"committed": None, "word": "".join(CLASS_EN_SYMS[i] for i in self.word),
                   "finalized": None}
         if hand_seen and idx is not None:
@@ -352,6 +355,7 @@ class SignSequencerEN:
         return events
 
     def _finalize(self):
+        """يقفل الكلمة الحالية في finalized_word ويصفّر المخزن."""
         self.finalized_word = "".join(CLASS_EN_SYMS[i] for i in self.word)
         self.word = []
 
@@ -366,6 +370,7 @@ class LivePipelineEN:
         self.auto_correct = auto_correct
 
     def update(self, frame):
+        """إطار BGR → result + events + word + (corrected/audio عند الإنهاء) + error (أو None)."""
         try:
             ts = time.monotonic() - self.t0
             overlay, result = process_frame_en(frame, int(ts * 1000))
@@ -441,6 +446,7 @@ def en_checks(check) -> None:
 # ---------------------------------------------------------------- CLI
 
 def main() -> None:
+    """CLI: --fetch-en | --train-en | --selftest-en (رسائل ودية عند الفشل)."""
     for _s in (sys.stdout, sys.stderr):
         try:
             _s.reconfigure(encoding="utf-8", errors="replace")

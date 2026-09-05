@@ -32,15 +32,12 @@ HAND_MODEL = ASSETS_DIR / "hand_landmarker.task"
 
 PARQUET = DATA_DIR / "arasl.parquet"
 ARASL_NPZ = DATA_DIR / "arasl.npz"
-SIGNS_PNG = DATA_DIR / "Signs_32_New.png"
 
 # المصدر: مرآة HF لـ ArASL2018 (نفس 54,049 صورة، نفس class 0..31، CC BY 4.0).
 # السبب: روابط Mendeley المباشرة تعيد 403/Cloudflare لطلبات غير-متصفح (يثبت 2026-09-05).
 HF_PARQUET_URL = ("https://huggingface.co/datasets/pain/ArASL_Database_Grayscale/"
                   "resolve/main/data/train-00000-of-00001-aa6a48ea2f282316.parquet")
 HF_PARQUET_SIZE = 30479019
-SIGNS_MENDELEY_URL = ("https://data.mendeley.com/public-files/datasets/y7pckrw6z2/"
-                      "files/263ffdd1-9599-4bd8-afaf-64918244050e/file_downloaded")
 
 CLASS_NAMES = [
     "عين", "ال", "ألف", "باء", "دال", "ظاء", "ضاد", "فاء", "قاف", "غين",
@@ -107,11 +104,13 @@ def setup_logging() -> None:
 
 
 def log() -> logging.Logger:
+    """يؤمّن الإعداد ثم يعيد Logger 'arsl' (مركزي للسجل)."""
     setup_logging()
     return logging.getLogger("arsl")
 
 
 def _maybe_download(url: str, dest: Path, expected_size: int) -> None:
+    """ينزّل URL إلى dest إن كان غائباً أو بحجم مختلف؛ يتحقق من الحجم المتوقع."""
     if dest.exists() and dest.stat().st_size == expected_size:
         return
     log().info("تنزيل %s ...", dest.name)
@@ -128,6 +127,7 @@ def _maybe_download(url: str, dest: Path, expected_size: int) -> None:
 # ---------------------------------------------------------------- البيانات
 
 def _cell_bytes(cell):
+    """يستخرج بايتات الصورة من خلية parquet (dict-bytes أو bytes مباشرة)."""
     if isinstance(cell, dict) and "bytes" in cell:
         return cell["bytes"]
     if isinstance(cell, bytes):
@@ -184,22 +184,14 @@ def fetch_dataset(force: bool = False) -> None:
     assert images.shape[1:] == (IMG_SIZE, IMG_SIZE, 1)
 
     np.savez_compressed(ARASL_NPZ, images=images, labels=lbl)
-    _signs_reference()
     extract_dictionary_samples()
     log().info("داتا سليمة: %d صورة | أصناف %d | تخزين %s", images.shape[0], len(uniq), ARASL_NPZ.name)
 
 
 def _npz_stack(path: Path):
+    """(images, labels) من ملف npz (تحميل كسول عبر np.load)."""
     z = np.load(path)
     return z["images"], z["labels"]
-
-
-def _signs_reference() -> None:
-    """لوحة الـ32 إشارة (اختيارية؛ إن فشلت تُترك لعرض الأيقونات لكل صنف)."""
-    try:
-        _maybe_download(SIGNS_MENDELEY_URL, SIGNS_PNG, 2613952)
-    except Exception as exc:
-        log().warning("لوحة الإشارات المرجعية فشلت (تبقى اختيارية): %s", exc)
 
 
 def load_dataset(force_rebuild: bool = False):
@@ -239,6 +231,7 @@ CPU_THREADS = 6  # قياس: MKL أسرع عند 6 خيوط (نوى فيزيائ
 
 
 def _build_cnn():
+    """معمارية CNN العربية (1×64×64 → 32 class). تُستورد من engine_en مع استبدال رأسها فقط."""
     import torch.nn as nn
 
     class CNN(nn.Module):
@@ -265,6 +258,7 @@ def _build_cnn():
 
 
 def _write_class_map() -> None:
+    """يكتب class_map.json (رمز/اسم لكل صنف) — يُقرأ في تبويب القاموس."""
     MODELS_DIR.mkdir(exist_ok=True)
     CLASS_MAP_PATH.write_text(
         json.dumps({str(i): {"sym": s, "name": n} for i, (s, n) in enumerate(zip(CLASS_SYMS, CLASS_NAMES))},
@@ -354,6 +348,7 @@ def train_cnn() -> None:
 
 
 def _per_class_val(x_val, y_val) -> None:
+    """دقة كل صنف على val + أضعف 3 أصناف (تقرير تدريب فقط)."""
     import torch
     model = _build_cnn().eval()
     model.load_state_dict(torch.load(MODEL_PATH, weights_only=True))
@@ -603,6 +598,7 @@ class SignSequencer:
         self.finalized_word = None
 
     def feed(self, hand_seen: bool, idx=None, conf=0.0, ts=0.0):
+        """إطار واحد: يصرّف التزام/كلمة/إنهاء، ويعيد events (committed/word/finalized)."""
         events = {"committed": None, "word": "".join(CLASS_SYMS[i] for i in self.word), "finalized": None}
         if hand_seen and idx is not None:
             self.last_hand_time = ts
@@ -641,6 +637,7 @@ class SignSequencer:
         return events
 
     def _finalize(self):
+        """يقفل الكلمة الحالية في finalized_word ويصفّر المخزن."""
         self.finalized_word = "".join(CLASS_SYMS[i] for i in self.word)
         self.word = []
 
@@ -648,6 +645,7 @@ class SignSequencer:
 # ---------------------------------------------------------------- M7: Groq تصحيح
 
 def _load_groq_key() -> str:
+    """يقرأ GROQ_API_KEY (env/.env) — بلا مفتاح يعيد '' (ثم raw fallback)."""
     import os
     try:
         from dotenv import load_dotenv
@@ -727,6 +725,7 @@ class LivePipeline:
         self.auto_correct = auto_correct
 
     def update(self, frame):
+        """إطار BGR → result + events + word + (corrected/audio عند الإنهاء) + error (أو None)."""
         try:
             ts = time.monotonic() - self.t0
             overlay, result = process_frame(frame, int(ts * 1000))
