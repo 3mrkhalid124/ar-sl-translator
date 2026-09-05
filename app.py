@@ -18,7 +18,8 @@ try:
 except Exception:
     engine_en = None  # لو غابت الوحدة الإنجليزية — العربي يعمل كما كان بلا كسر
 
-st.set_page_config(page_title="مترجم لغة الإشارة العربية", page_icon="\U0001F91F", layout="wide")
+st.set_page_config(page_title="Sign Language Translator", page_icon="\U0001F91F", layout="wide")
+
 
 CSS = """
 <style>
@@ -218,9 +219,9 @@ def _reveal_md(rev, lang):
     raw, text, src = rev
     ai = src == "groq" and raw != text
     badge = ("<span class='badge badge-qamari'>AI ✨</span>" if ai
-             else "<span class='badge badge-index' style='direction:rtl'>خام</span>")
+             else "<span class='badge badge-index'>" + tr("raw", "خام") + "</span>")
     raw_tiles = "".join(f"<span class='tile'>{c}</span>" for c in raw)
-    return ("<div class='reveal-stage done' dir='" + ("ltr" if IS_EN else "rtl") + "'>"
+    return ("<div class='reveal-stage done' dir='" + _DIRN + "'>"
             f"<div class='rev-raw'>{raw_tiles}</div>"
             f"<div class='rev-cor'>{text} {badge}</div></div>")
 
@@ -239,10 +240,9 @@ def _history_md(items, lang):
             ai = src == "groq" and raw != text
             tag = ("<span class='badge badge-qamari'>AI ✨</span>" if ai
                    else "<span class='badge badge-index'>"
-                        + ("raw" if (src == "raw" and IS_EN) else ("خام" if src == "raw" else "Groq"))
-                        + "</span>")
+                        + tr("raw", "خام") + "</span>")
             mini = f"<span class='raw-mini'>{raw}</span>" if ai else ""
-            out.append(f"<div class='bub {'bub-ai' if ai else ''}' dir='rtl'>{mini}{text}{tag}</div>")
+            out.append(f"<div class='bub {'bub-ai' if ai else ''}' dir='{_DIRN}'>{mini}{text}{tag}</div>")
         else:
             out.append("<div class='bub-slot'></div>")
     return "<div class='bub-wrap'>" + "".join(out) + "</div>"
@@ -271,18 +271,29 @@ def _svg_pattern(simple):
 lang = st.radio("اللغة / Language", ["عربي", "English"], horizontal=True, key="lang_toggle")
 IS_EN = lang == "English"
 if IS_EN and engine_en is None:
-    st.error("الوحدة الإنجليزية غير متاحة — شغّل: python engine_en.py --fetch-en ثم --train-en")
+    st.error("English module unavailable — run: python engine_en.py --fetch-en then --train-en")
 
-# خلفية لغة-مخصوصة: نقش إسلامي ثماني خفيف للعربي، شبكة محايدة للإنجليزي (ألوان بصرية فقط)
+
+def tr(en, ar_):
+    """ترجمة نص حسب اللغة النشطة — إنجليزية كاملة في الوضع الإنجليزي، عربية كاملة في العربي."""
+    return en if IS_EN else ar_
+
+
+# خلفية لغة-مخصوصة + توجيه خالص (LTR في الإنجليزي، RTL في العربي — بلا مزيج)
 _WALL = _svg_pattern(IS_EN)
+_DIRCSS = (":root, .stApp { direction: rtl; } h1, h2, h3 { text-align: right; }"
+           if not IS_EN else
+           ":root, .stApp { direction: ltr; } h1, h2, h3 { text-align: left; }")
 st.markdown(
-    f"<style>html, body, .stApp {{ background-image: url('{_WALL}'), "
+    f"<style>{_DIRCSS} html, body, .stApp {{ background-image: url('{_WALL}'), "
     "radial-gradient(1100px 750px at 88% -8%, rgba(245,197,24,.08), transparent 62%), "
     "radial-gradient(1000px 700px at -8% 112%, rgba(29,185,84,.07), transparent 60%); "
     "background-attachment: fixed; background-size: auto, auto, auto; }}</style>",
     unsafe_allow_html=True)
 
-tab_live, tab_dict = st.tabs(["\U0001F3A5 ترجمة لحظية", "\U0001F4D6 القاموس"])
+tab_live, tab_dict = (st.tabs(["\U0001F3A5 Live Translation", "\U0001F4D6 Dictionary"])
+                      if IS_EN else
+                      st.tabs(["\U0001F3A5 ترجمة لحظية", "\U0001F4D6 القاموس"]))
 
 if IS_EN:
     _PCMODEL = engine_en.MODEL_EN_PATH
@@ -294,13 +305,14 @@ else:
     _DIRN = "rtl"
 
 with tab_live:
-    st.title("مترجم لغة الإشارة" if IS_EN else "مترجم لغة الإشارة العربية")
+    st.title(tr("Sign Language Translator", "مترجم لغة الإشارة العربية"))
     if not _PCMODEL.exists():
-        st.error("النموذج غير مدرب بعد — شغّل: " + ("python engine_en.py --train-en" if IS_EN
-                 else "python engine.py --train"))
+        st.error("Model not trained yet — run: " + (tr("python engine_en.py --train-en", "python engine_en.py --train-en")
+                 if IS_EN else "python engine.py --train"))
         st.stop()
     if not engine.HAND_MODEL.exists():
-        st.error("أصل MediaPipe مفقود: features/hand_landmarker.task")
+        st.error(tr("Hand landmarker model missing: features/hand_landmarker.task",
+                    "أصل MediaPipe مفقود: features/hand_landmarker.task"))
         st.stop()
 
     pkey = f"pipe_{lang}"
@@ -319,23 +331,25 @@ with tab_live:
 
     has_key = bool(engine._load_groq_key())
     st.caption("Groq: " + (
-        "مفعّل — يُصحَّح النص تلقائياً" if has_key
-        else "غير مفعّل — يُستخدم النص الخام حتى إضافة GROQ_API_KEY في .env"))
+        tr("Active — auto-correcting text", "مفعّل — يُصحَّح النص تلقائياً") if has_key
+        else tr("Inactive — raw text used until GROQ_API_KEY is set in .env",
+                "غير مفعّل — يُستخدم النص الخام حتى إضافة GROQ_API_KEY في .env")))
 
     col_ctrl = st.columns([1, 3])[0]
     with col_ctrl:
-        if st.button("بدء التقاط الكاميرا", type="primary", width="stretch"):
+        if st.button(tr("Start camera", "بدء التقاط الكاميرا"), type="primary", width="stretch"):
             if st.session_state.cap is None or not st.session_state.cap.isOpened():
                 cap = cv2.VideoCapture(0)
                 if not cap.isOpened():
-                    st.error("تعذر فتح الكاميرا (source=0)")
+                    st.error(tr("Could not open camera (source=0)", "تعذر فتح الكاميرا (source=0)"))
                 else:
                     st.session_state.cap = cap
             st.session_state.live = True
-        if st.button("إيقاف", width="stretch"):
+        if st.button(tr("Stop", "إيقاف"), width="stretch"):
             st.session_state.live = False
         if has_key is False:
-            st.info("أضف مفتاح Groq في .env ليُصحَّح النص تلقائياً", icon="\U0001F511")
+            st.info(tr("Set GROQ_API_KEY in .env to auto-correct text",
+                       "أضف مفتاح Groq في .env ليُصحَّح النص تلقائياً"), icon="\U0001F511")
 
     frame_ph = st.empty()
     hand_ph = st.empty()
@@ -355,7 +369,7 @@ with tab_live:
         cap = st.session_state.cap
         if cap is None or not cap.isOpened():
             st.session_state.live = False
-            status_ph.error("الكاميرا غير متاحة")
+            status_ph.error(tr("Camera unavailable", "الكاميرا غير متاحة"))
             return
         ok, frame = cap.read()
         if not ok:
@@ -454,22 +468,21 @@ with tab_live:
         col_aud = st.columns([1, 4])[0]
         with col_aud:
             st.download_button(
-                "⬇ تحميل آخر تسجيل صوتي (mp3)",
+                tr("⬇ Download last audio (mp3)", "⬇ تحميل آخر تسجيل صوتي (mp3)"),
                 data=st.session_state[f"aud_{lang}"],
                 file_name=f"sign_word_{lang}.mp3",
                 mime="audio/mpeg",
                 width="stretch")
 
     st.divider()
-    if IS_EN:
-        st.markdown("**How it works:** show a sign ≥ 5 consecutive frames with conf ≥ 0.90 and a "
-                    "top1−top2 margin ≥ 0.05 to commit the letter (unclear → shown). Then hold "
-                    "no hand for 2.5 s to lock the word and speak it (auto Groq correction if key set).")
-    else:
-        st.markdown("**كيف تعمل:** اعرض إشارة أمام الكاميرا ≥ 5 إطارات متتالية بثقة ≥ 0.90 مع "
-                    "تحقّق هندسي (ألف/سين/فاء/ثاء معتمدة عند التحقق) ليُلتزم الحرف. إن عارضت الهندسة "
-                    "تصنيف CNN يُعرض «غير معروف» بدل حرف مخطئ. ثم انتظر بلا يد 2.5 ثانية لتُقفل "
-                    "الكلمة وتُنطق (مع تصحيح Groq التلقائي إن توفّر).")
+    st.markdown(tr(
+        "**How it works:** hold a sign for ≥ 5 consecutive frames with confidence ≥ 0.90 and a "
+        "top1−top2 margin ≥ 0.05 to commit a letter (unclear → shown). Then hold no hand for 2.5 s "
+        "to lock the word and speak it (auto Groq correction when a key is set).",
+        "**كيف تعمل:** اعرض إشارة أمام الكاميرا ≥ 5 إطارات متتالية بثقة ≥ 0.90 مع "
+        "تحقّق هندسي (ألف/سين/فاء/ثاء معتمدة عند التحقق) ليُلتزم الحرف. إن عارضت الهندسة "
+        "تصنيف CNN يُعرض «غير معروف» بدل حرف مخطئ. ثم انتظر بلا يد 2.5 ثانية لتُقفل "
+        "الكلمة وتُنطق (مع تصحيح Groq التلقائي إن توفّر)."))
 
 with tab_dict:
     st.title("Sign Language Dictionary" if IS_EN else "قاموس الإشارات")
@@ -524,6 +537,9 @@ with tab_dict:
         with cols[i % 4]:
             st.markdown(card, unsafe_allow_html=True)
 
-st.markdown("<div class='meta' style='margin-top:24px'>العربي: val 95.18% · 32 إشارة ArASL · "
-            "English: val 100% · 24 ASL signs — واجهة محلية Streamlit (M3–M11 + P1 + EN)</div>",
-            unsafe_allow_html=True)
+st.markdown(tr(
+    "<div class='meta' style='margin-top:24px'>Arabic: val 95.18% · 32 ArASL signs · "
+    "English: val 100% · 24 ASL signs — local Streamlit interface (M3–M11 + P1 + EN)</div>",
+    "<div class='meta' style='margin-top:24px'>العربي: val 95.18% · 32 إشارة ArASL · "
+    "English: val 100% · 24 ASL signs — واجهة محلية Streamlit (M3–M11 + P1 + EN)</div>"),
+    unsafe_allow_html=True)
