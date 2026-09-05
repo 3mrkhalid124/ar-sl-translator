@@ -2,7 +2,6 @@
 كل المنطق في engine.py؛ هنا الاستهلاك/العرض فقط (RTL، خط عربي، بطاقات)."""
 
 import sys
-import time
 import base64
 import json
 from pathlib import Path
@@ -77,7 +76,6 @@ st.markdown(CSS, unsafe_allow_html=True)
 
 
 def _load_class_map():
-    import json
     try:
         return json.loads(engine.CLASS_MAP_PATH.read_text(encoding="utf-8"))
     except Exception:
@@ -115,12 +113,10 @@ if IS_EN and engine_en is None:
 tab_live, tab_dict = st.tabs(["\U0001F3A5 ترجمة لحظية", "\U0001F4D6 القاموس"])
 
 if IS_EN:
-    MOD = engine_en
     _PCMODEL = engine_en.MODEL_EN_PATH
     _PCLASS = engine_en.LivePipelineEN
     _DIRN = "ltr"
 else:
-    MOD = engine
     _PCMODEL = engine.MODEL_PATH
     _PCLASS = engine.LivePipeline
     _DIRN = "rtl"
@@ -154,7 +150,7 @@ with tab_live:
         "مفعّل — يُصحَّح النص تلقائياً" if has_key
         else "غير مفعّل — يُستخدم النص الخام حتى إضافة GROQ_API_KEY في .env"))
 
-    col_ctrl, col_state = st.columns([1, 3])
+    col_ctrl = st.columns([1, 3])[0]
     with col_ctrl:
         if st.button("بدء التقاط الكاميرا", type="primary", width="stretch"):
             if st.session_state.cap is None or not st.session_state.cap.isOpened():
@@ -289,7 +285,10 @@ with tab_dict:
     st.title("Sign Language Dictionary" if IS_EN else "قاموس الإشارات")
     if IS_EN:
         n = engine_en.EN_CLASSES
-        _cmap = json.loads(engine_en.CLASS_MAP_EN_PATH.read_text(encoding="utf-8"))
+        try:
+            _cmap = json.loads(engine_en.CLASS_MAP_EN_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            _cmap = {str(i): {"sym": s, "name": s} for i, s in enumerate(engine_en.CLASS_EN_SYMS)}
 
         def _dict_info(i):
             return _cmap.get(str(i), {"sym": engine_en.CLASS_EN_SYMS[i],
@@ -306,11 +305,10 @@ with tab_dict:
             return f"<span class='badge badge-{cat}'>EN</span><span class='badge badge-index'>#{i:02d}</span>"
     else:
         n = engine.EXPECTED_CLASSES
-        _cmap = None
+        cmap_ar = _load_class_map()
 
         def _dict_info(i):
-            cmap = _load_class_map()
-            return cmap.get(str(i), {"sym": engine.CLASS_SYMS[i], "name": engine.CLASS_NAMES[i]})
+            return cmap_ar.get(str(i), {"sym": engine.CLASS_SYMS[i], "name": engine.CLASS_NAMES[i]})
 
         def _dict_cat(i):
             return _cat(i)

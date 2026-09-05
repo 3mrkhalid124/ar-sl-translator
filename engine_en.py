@@ -83,6 +83,12 @@ def fetch_en_data(force: bool = False) -> None:
     """Kaggle Sign Language MNIST → data/asl_mnist.npz + assets/dict_en/*.png + models/class_map_en.json."""
     if ASL_MNIST_NPZ.exists() and not force:
         ar.log().info("asl_mnist.npz موجود مسبقاً")
+        if (len(list(DICT_EN_DIR.glob("*.png"))) != EN_CLASSES
+                or not CLASS_MAP_EN_PATH.exists()):
+            z = np.load(ASL_MNIST_NPZ)
+            _write_dict_en(z["images"], z["labels"])
+            _write_class_map_en()
+            ar.log().info("أُعيد بناء dict_en/class_map_en من npz الموجود")
         return
     try:
         import kagglehub
@@ -180,7 +186,7 @@ def train_en() -> None:
     x_val = torch.from_numpy(x_val)
     y_val = torch.from_numpy(y_val)
 
-    best_acc = 0.0
+    best_acc = -1.0
     reached = False
     train_n = x_train.shape[0]
     for ep in range(1, MAX_EPOCHS_EN + 1):
@@ -210,13 +216,14 @@ def train_en() -> None:
                       ep, train_acc, val_acc, time.time() - t0)
         if val_acc > best_acc:
             best_acc = val_acc
+            MODELS_DIR.mkdir(exist_ok=True)
+            torch.save(model.state_dict(), MODEL_EN_PATH)
+            _write_class_map_en()
+            ar.log().info("checkpoint أفضل: val %.4f → %s", best_acc, MODEL_EN_PATH.name)
         if val_acc >= TARGET_VAL_ACC_EN:
             reached = True
             break
 
-    MODELS_DIR.mkdir(exist_ok=True)
-    torch.save(model.state_dict(), MODEL_EN_PATH)
-    _write_class_map_en()
     ar.log().info("تعليم EN انتهى: best val %.4f → %s", best_acc, MODEL_EN_PATH.name)
     print(f"[SELFTEST] train_en: {'PASS' if reached else 'FAIL'} best_val_acc={best_acc:.4f} "
           f"target={TARGET_VAL_ACC_EN}")
