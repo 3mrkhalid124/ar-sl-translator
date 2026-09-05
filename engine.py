@@ -85,10 +85,14 @@ def setup_logging() -> None:
     """Logging لا-حظري (QueueHandler + Listener thread) — لا يُبطئ الحلقة الحية."""
     if getattr(setup_logging, "_listener", None) is not None:
         return
-    LOGS_DIR.mkdir(exist_ok=True)
     fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
-    file = logging.FileHandler(LOGS_DIR / "app.log", encoding="utf-8")
-    file.setFormatter(fmt)
+    try:
+        LOGS_DIR.mkdir(exist_ok=True)
+        file = logging.FileHandler(LOGS_DIR / "app.log", encoding="utf-8")
+        file.setFormatter(fmt)
+    except OSError as exc:
+        logging.error("تعذر تهيئة ملف السجل (%s) — Stream فقط", exc)
+        file = None
     stream = logging.StreamHandler(sys.stderr)
     stream.setFormatter(fmt)
     root = logging.getLogger("arsl")
@@ -96,7 +100,8 @@ def setup_logging() -> None:
     if not root.handlers:
         qh = logging.handlers.QueueHandler(_log_queue)
         root.addHandler(qh)
-        listener = logging.handlers.QueueListener(_log_queue, file, stream)
+        handlers = [file] if file is not None else []
+        listener = logging.handlers.QueueListener(_log_queue, *(handlers + [stream]))
         listener.start()
         setup_logging._listener = listener
 
@@ -364,11 +369,18 @@ def _per_class_val(x_val, y_val) -> None:
 
 
 def _get_model():
-    """يحمّل cnn.pt مرة واحدة ويخزّنه (حاسم لـ fps في الحلقة الحية)."""
+    """يحمّل cnn.pt مرة واحدة ويخزّنه (حاسم لـ fps في الحلقة الحية).
+    مفقود/تالف → RuntimeError برسالة إجرائية واضحة (لا traceback خام)."""
     model = getattr(_get_model, "cache", None)
     if model is None:
-        model = _build_cnn().eval()
-        model.load_state_dict(torch.load(MODEL_PATH, weights_only=True))
+        if not MODEL_PATH.exists():
+            raise RuntimeError(f"نموذج CNN مفقود: {MODEL_PATH.name} — شغّل: python engine.py --train")
+        try:
+            model = _build_cnn().eval()
+            model.load_state_dict(torch.load(MODEL_PATH, weights_only=True))
+        except Exception as exc:
+            raise RuntimeError(
+                f"تعذر تحميل {MODEL_PATH.name} ({exc}) — أعد التدريب: python engine.py --train") from exc
         _get_model.cache = model
     return model
 
@@ -412,7 +424,12 @@ def _get_hand_detector():
             min_hand_presence_confidence=0.5,
             min_tracking_confidence=0.5,
         )
-        det = mp_vision.HandLandmarker.create_from_options(options)
+        det = None
+        try:
+            det = mp_vision.HandLandmarker.create_from_options(options)
+        except Exception as exc:
+            raise RuntimeError(
+                f"فشل تهيئة كاشف اليد (تأكد من سلامة {HAND_MODEL.name}): {exc}") from exc
         _get_hand_detector.cache = det
     return det
 
@@ -443,7 +460,10 @@ _FINGER_LINKS = [  # (pip, tip) لكل إصبع بترتيب: سبابة/وسط�
 
 def finger_features(landmarks):
     """ميزات هندسية من 21 نقطة: أصابع الأربعة ممدودة + الإبهام + العدد.
-    القاعدة: الإصبع ممدود إذا كان طرفه أبعد من المعصم من مفصل PIP (بهامش 1.1×)."""
+    القاعدة: الإصبع ممدود إذا كان طرفه أبعد من المعصم من مفصل PIP (بهامش 1.1×).
+    لا نقاط → أصفار (لا معلومات هندسية)."""
+    if not landmarks:
+        return {"fingers": [False, False, False, False], "thumb": False, "num_ext": 0}
     pts = np.array([[lm.x, lm.y] for lm in landmarks], dtype=np.float32)
     wrist = pts[_LM["wrist"]]
     def _dist(a, b):
@@ -456,8 +476,8 @@ def finger_features(landmarks):
 def validate_geometry(landmarks, cls_idx: int):
     """طبقة التحقق الهندسي (Priority 1): إن كان للنمط المعلوم للصنف قيد، نعبّر رفضاً عن تعارضٍ
     واضح بين الهندسة وتصنيف CNN (فرق عدد الأصابع ≥ 2 أو تعارض إبهام حاسم) → 'غير معروف'.
-    الأصناف بلا نمط معروف تُقبل (لا نقيّد بما لا نعرفه)."""
-    if cls_idx not in SIGNPAT:
+    بلا نقاط (يد فارغة) → قَبول صامت (لا معلومات تُرفض)."""
+    if not landmarks or cls_idx not in SIGNPAT:
         return True
     rule = SIGNPAT[cls_idx]
     if not rule:
@@ -503,10 +523,13 @@ def crop_hand_patch(frame, landmarks, pad: float = HAND_PAD):
 def process_frame(frame, ts_ms: int):
     """M4: إطار → (overlay_frame, result)
     result: {hand, unknown, idx, label, label_en, conf, bbox}.
-    Priority 1: لو رفض التحقق الهندسي تصنيف CNN → 'غير معروف' (idx=None, conf=0) بدل تثبيت حرف غلط."""
-    overlay = frame.copy()
+    Priority 1: لو رفض التحقق الهندسي تصنيف CNN → 'غير معروف' (idx=None, conf=0) بدل تثبيت حرف غلط.
+    إطار None/فارغ → نتيجة فارغة (لا crash)."""
     result = {"hand": False, "unknown": False, "idx": None, "label": None,
               "label_en": None, "conf": 0.0, "bbox": None}
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return np.zeros((240, 320, 3), dtype=np.uint8), result
+    overlay = frame.copy()
     landmarks = detect_hand(frame, ts_ms)
     if landmarks:
         result["hand"] = True
@@ -704,16 +727,26 @@ class LivePipeline:
         self.auto_correct = auto_correct
 
     def update(self, frame):
-        ts = time.monotonic() - self.t0
-        overlay, result = process_frame(frame, int(ts * 1000))
-        events = self.seq.feed(result["hand"], result["idx"], result["conf"], ts)
-        out = {**result, "events": events, "overlay": overlay,
-               "word": events["word"], "corrected": None, "audio": None}
-        if events["finalized"]:
-            out["corrected"] = (correct_word(events["finalized"]) if self.auto_correct
-                                else {"text": events["finalized"], "source": "raw", "api": False})
-            out["audio"] = synthesize_speech(out["corrected"]["text"])
-        return out
+        try:
+            ts = time.monotonic() - self.t0
+            overlay, result = process_frame(frame, int(ts * 1000))
+            events = self.seq.feed(result["hand"], result["idx"], result["conf"], ts)
+            out = {**result, "events": events, "overlay": overlay,
+                   "word": events["word"], "corrected": None, "audio": None, "error": None}
+            if events["finalized"]:
+                out["corrected"] = (correct_word(events["finalized"]) if self.auto_correct
+                                    else {"text": events["finalized"], "source": "raw", "api": False})
+                out["audio"] = synthesize_speech(out["corrected"]["text"])
+            return out
+        except Exception as exc:
+            # أي فشل في مسار المعالجة (كاميرا/موديل/كاشف) → نتيجة خطأ صريحة بدل إسقاط التطبيق
+            log().error("LivePipeline.update تعثر: %s", exc)
+            return {"hand": False, "unknown": False, "idx": None, "label": None,
+                    "label_en": None, "conf": 0.0, "bbox": None,
+                    "events": {"committed": None, "word": "", "finalized": None},
+                    "overlay": np.zeros((240, 320, 3), dtype=np.uint8), "word": "",
+                    "corrected": None, "audio": None,
+                    "error": f"تعذّرت معالجة الإطار ({exc}) — تحقق من الكاميرا والنموذج."}
 
 
 def run_selftest() -> int:
