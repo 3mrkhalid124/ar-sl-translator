@@ -13,7 +13,6 @@ import logging.handlers
 import queue
 import sys
 import time
-import zipfile
 from pathlib import Path
 
 import cv2
