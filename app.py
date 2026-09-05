@@ -255,6 +255,7 @@ with tab_live:
                 (out["events"]["finalized"], out["corrected"]["text"], out["corrected"]["source"]))
             if out["audio"]:
                 audio_ph.audio(out["audio"], format="audio/mp3", autoplay=True)
+                st.session_state[f"aud_{lang}"] = out["audio"]
 
         history_items = []
         for raw, text, src in st.session_state[hkey]:
@@ -272,6 +273,16 @@ with tab_live:
 
 
     live_loop()
+
+    if f"aud_{lang}" in st.session_state:
+        col_aud = st.columns([1, 4])[0]
+        with col_aud:
+            st.download_button(
+                "⬇ تحميل آخر تسجيل صوتي (mp3)",
+                data=st.session_state[f"aud_{lang}"],
+                file_name=f"sign_word_{lang}.mp3",
+                mime="audio/mpeg",
+                width="stretch")
 
     st.divider()
     if IS_EN:
