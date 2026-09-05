@@ -114,6 +114,15 @@ h1, h2, h3 { color: #f5c518 !important; text-align: right; }
 .bub .raw-mini { display: block; font-size: 13px; color: #9aa4b5; padding-bottom: 2px; }
 .bub .badge { vertical-align: middle; }
 .bub-slot { display: none; }
+
+/* ---- البند 2: مؤشرات أوضح — لون الثقة حسب قيمتها، موجة صوت CSS، fade بين اللغتين ---- */
+@keyframes page-fade { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes wave { 0%, 100% { transform: scaleY(.35); } 50% { transform: scaleY(1); } }
+.stMainBlockContainer { animation: page-fade .3s ease 1; }
+.wave-row { display: flex; gap: 4px; align-items: flex-end; justify-content: center; height: 26px; margin: 6px 0 2px; }
+.wave-row .bar { width: 5px; height: 24px; border-radius: 3px; background: #2ec4b6; transform-origin: bottom;
+                animation: wave 1s ease-in-out infinite; animation-play-state: paused; opacity: .85; }
+.wave-row.playing .bar { animation-play-state: running; }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -151,6 +160,27 @@ def _img_uri(idx):
 # ---- بند 1: عرض «تكوين» الحروف/الكلمات — HTML فقط، من بيانات الحالة نفسها (بلا لمس منطق) ----
 _MAX_TILES = 40
 _HIST_SLOTS = 8
+
+
+def _conf_bar(pct):
+    """شريط الثقة: تدرّج لوني حي — أحمر تحت العتبة، أصفر قريب، أخضر/سماوي فوقها (CSS inline فقط)."""
+    TH = int(round(engine.CONF_THRESHOLD * 100))
+    if pct >= TH:
+        k = min(1.0, (pct - TH) / max(1, 100 - TH))
+        col = f"rgb({29 + round(82 * k)},{185 + round(20 * k)},{84 + round(124 * k)})"
+    elif pct >= 60:
+        k = (pct - 60) / max(1, TH - 60)
+        col = f"rgb({round(229 - 20 * k)},{round(82 + 57 * k)},{round(80 + 117 * k)})"
+    else:
+        col = "rgb(229,82,80)"
+    return (f"<div class='conf-wrap'><div class='conf-fill' "
+            f"style='width:{pct}%; background:{col}; box-shadow:0 0 12px {col}66'></div></div>")
+
+
+def _wave_md():
+    """موجة صوت خفيفة (CSS keyframes فقط) تُعرض أثناء تشغيل mp3."""
+    bars = "".join(f"<span class='bar' style='animation-delay:{i * .12:.2f}s'></span>" for i in range(7))
+    return "<div class='wave-row playing'>" + bars + "</div>"
 
 
 def _tile_md(word, lang):
@@ -268,6 +298,7 @@ with tab_live:
     tiles_ph = st.empty()
     status_ph = st.empty()
     audio_ph = st.empty()
+    wave_ph = st.empty()
     history_ph = st.empty()
 
 
@@ -312,15 +343,13 @@ with tab_live:
                 letter_ph.markdown(
                     f"<div class='big-slot'><div class='big-letter'>{out['label']}</div>"
                     f"<div class='meta'>confidence {out['conf']:.2f}</div>"
-                    f"<div class='conf-wrap'><div class='conf-fill' style='width:{pct}%'></div></div>"
-                    f"</div>",
+                    f"{_conf_bar(pct)}</div>",
                     unsafe_allow_html=True)
             else:
                 letter_ph.markdown(
                     f"<div class='big-slot'><div class='big-letter'>{out['label']}</div>"
                     f"<div class='meta'>{out['label_en']} — الثقة {out['conf']:.2f}</div>"
-                    f"<div class='conf-wrap'><div class='conf-fill' style='width:{pct}%'></div></div>"
-                    f"</div>",
+                    f"{_conf_bar(pct)}</div>",
                     unsafe_allow_html=True)
         elif out.get("unknown"):
             letter_ph.markdown(
@@ -362,6 +391,13 @@ with tab_live:
             if out["audio"]:
                 audio_ph.audio(out["audio"], format="audio/mp3", autoplay=True)
                 st.session_state[f"aud_{lang}"] = out["audio"]
+                st.session_state[f"wav_{lang}"] = time.perf_counter()
+
+        wts = st.session_state.get(f"wav_{lang}")
+        if wts and time.perf_counter() - wts < 4.5:
+            wave_ph.markdown(_wave_md(), unsafe_allow_html=True)
+        else:
+            wave_ph.markdown("")
 
         history_ph.markdown(_history_md(st.session_state[hkey], lang), unsafe_allow_html=True)
 
