@@ -89,7 +89,12 @@ def fetch_en_data(force: bool = False) -> None:
         raise RuntimeError(
             "kagglehub غير مثبَّت — شغّل: pip install kagglehub (يقرأ ~/.kaggle/access_token)") from exc
 
-    base = Path(kagglehub.dataset_download(KAGGLE_DATASET))
+    try:
+        base = Path(kagglehub.dataset_download(KAGGLE_DATASET))
+    except Exception as exc:
+        raise RuntimeError(
+            "فشل تنزيل الداتا من Kaggle — تأكد من internet و~/.kaggle/access_token "
+            f"(الصحيح: KGAT_...): {exc}") from exc
     tr_csv = base / KAGGLE_TRAIN_REL
     te_csv = base / KAGGLE_TEST_REL
     if not (tr_csv.exists() and te_csv.exists()):
@@ -218,16 +223,23 @@ def train_en() -> None:
 # ---------------------------------------------------------------- التشغيل (Step 3)
 
 def _get_model_en():
-    """يحمّل cnn_en.pt مرة واحدة (singleton، كأنماط العربي)."""
+    """يحمّل cnn_en.pt مرة واحدة (singleton، كأنماط العربي).
+    مفقود/تالف → RuntimeError برسالة إجرائية واضحة (لا traceback خام)."""
     model = getattr(_get_model_en, "cache", None)
     if model is None:
         import torch
-        model = ar._build_cnn()
-        if model.head[1].out_features != EN_CLASSES:
-            model.head = torch.nn.Sequential(
-                model.head[0], torch.nn.Linear(64 * 8 * 8, EN_CLASSES))
-        model = model.eval()
-        model.load_state_dict(torch.load(MODEL_EN_PATH, weights_only=True))
+        if not MODEL_EN_PATH.exists():
+            raise ar.RuntimeError(f"نموذج EN مفقود: {MODEL_EN_PATH.name} — شغّل: python engine_en.py --train-en")
+        try:
+            model = ar._build_cnn()
+            if model.head[1].out_features != EN_CLASSES:
+                model.head = torch.nn.Sequential(
+                    model.head[0], torch.nn.Linear(64 * 8 * 8, EN_CLASSES))
+            model = model.eval()
+            model.load_state_dict(torch.load(MODEL_EN_PATH, weights_only=True))
+        except Exception as exc:
+            raise ar.RuntimeError(
+                f"تعذر تحميل {MODEL_EN_PATH.name} ({exc}) — أعد التدريب: python engine_en.py --train-en") from exc
         _get_model_en.cache = model
     return model
 
@@ -251,10 +263,13 @@ def margin_accept(margin: float) -> bool:
 
 def process_frame_en(frame, ts_ms: int):
     """مثل process_frame العربي لكن بالنموذج/العلامات الإنجليزية + margin-check بدل SIGNPAT.
-    result: {hand, unknown, idx, label, label_en, conf, bbox}."""
-    overlay = frame.copy()
+    result: {hand, unknown, idx, label, label_en, conf, bbox}.
+    إطار None/فارغ → نتيجة فارغة (لا crash)."""
     result = {"hand": False, "unknown": False, "idx": None, "label": None,
               "label_en": None, "conf": 0.0, "bbox": None}
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return np.zeros((240, 320, 3), dtype=np.uint8), result
+    overlay = frame.copy()
     landmarks = ar.detect_hand(frame, ts_ms)  # HandLandmarker مشترك (فاصل متوافق بين اللغتين)
     if landmarks:
         result["hand"] = True
@@ -351,17 +366,26 @@ class LivePipelineEN:
         self.auto_correct = auto_correct
 
     def update(self, frame):
-        ts = time.monotonic() - self.t0
-        overlay, result = process_frame_en(frame, int(ts * 1000))
-        events = self.seq.feed(result["hand"], result["idx"], result["conf"], ts)
-        out = {**result, "events": events, "overlay": overlay,
-               "word": events["word"], "corrected": None, "audio": None}
-        if events["finalized"]:
-            out["corrected"] = (ar.correct_word(events["finalized"], language="en")
-                                if self.auto_correct
-                                else {"text": events["finalized"], "source": "raw", "api": False})
-            out["audio"] = ar.synthesize_speech(out["corrected"]["text"], lang="en")
-        return out
+        try:
+            ts = time.monotonic() - self.t0
+            overlay, result = process_frame_en(frame, int(ts * 1000))
+            events = self.seq.feed(result["hand"], result["idx"], result["conf"], ts)
+            out = {**result, "events": events, "overlay": overlay,
+                   "word": events["word"], "corrected": None, "audio": None, "error": None}
+            if events["finalized"]:
+                out["corrected"] = (ar.correct_word(events["finalized"], language="en")
+                                    if self.auto_correct
+                                    else {"text": events["finalized"], "source": "raw", "api": False})
+                out["audio"] = ar.synthesize_speech(out["corrected"]["text"], lang="en")
+            return out
+        except Exception as exc:
+            ar.log().error("LivePipelineEN.update تعثر: %s", exc)
+            return {"hand": False, "unknown": False, "idx": None, "label": None,
+                    "label_en": None, "conf": 0.0, "bbox": None,
+                    "events": {"committed": None, "word": "", "finalized": None},
+                    "overlay": np.zeros((240, 320, 3), dtype=np.uint8), "word": "",
+                    "corrected": None, "audio": None,
+                    "error": f"Failed to process frame ({exc}) — check camera and EN model."}
 
 
 # ---------------------------------------------------------------- الفحص الذاتي (EN)
@@ -374,13 +398,18 @@ def en_checks(check) -> None:
     check("en.artifacts.class_map", CLASS_MAP_EN_PATH.exists())
     check("en.artifacts.dict_en", len(list(DICT_EN_DIR.glob("*.png"))) == EN_CLASSES)
 
-    images, labels = load_en_dataset()
-    check("en.data.shape", images.shape == (EN_IMAGES, IMG_SIZE, IMG_SIZE, 1)
-          and len(np.unique(labels)) == EN_CLASSES)
-
-    idx, conf, margin = classify_en_softmax(images[0][:, :, 0])
-    check("en.classify.smoke", 0 <= idx < EN_CLASSES and 0.0 <= conf <= 1.0 and 0.0 <= margin <= 1.0)
-    check("en.margin.gate", margin_accept(0.08) is True and margin_accept(0.01) is False)
+    try:
+        images, labels = load_en_dataset()
+        check("en.data.shape", images.shape == (EN_IMAGES, IMG_SIZE, IMG_SIZE, 1)
+              and len(np.unique(labels)) == EN_CLASSES)
+        idx, conf, margin = classify_en_softmax(images[0][:, :, 0])
+        check("en.classify.smoke", 0 <= idx < EN_CLASSES and 0.0 <= conf <= 1.0 and 0.0 <= margin <= 1.0)
+        check("en.margin.gate", margin_accept(0.08) is True and margin_accept(0.01) is False)
+    except Exception as exc:
+        ar.log().error("en_checks data/classify تعثر: %s", exc)
+        check("en.data.shape", False)
+        check("en.classify.smoke", False)
+        check("en.margin.gate", False)
 
     black = np.zeros((480, 640, 3), dtype=np.uint8)
     _, res = process_frame_en(black, 1)
@@ -407,9 +436,17 @@ def main() -> None:
             pass
     ar.setup_logging()
     if "--fetch-en" in sys.argv:
-        fetch_en_data()
+        try:
+            fetch_en_data()
+        except Exception as exc:
+            print(f"[SELFTEST] fetch_en: FAIL — {exc}")
+            sys.exit(1)
     elif "--train-en" in sys.argv:
-        train_en()
+        try:
+            train_en()
+        except Exception as exc:
+            print(f"[SELFTEST] train_en: FAIL — {exc}")
+            sys.exit(1)
     elif "--selftest-en" in sys.argv:
         ok = True
         def check(name, cond):

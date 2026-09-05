@@ -191,6 +191,10 @@ with tab_live:
         if not ok:
             return
         out = st.session_state[pkey].update(frame)
+        if out.get("error"):
+            st.session_state.live = False
+            status_ph.error(out["error"])
+            return
         frame_ph.image(out["overlay"], channels="BGR", width="stretch")
 
         if not out["hand"]:
