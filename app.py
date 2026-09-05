@@ -3,6 +3,7 @@
 
 import sys
 import time
+import base64
 from pathlib import Path
 
 import cv2
@@ -24,14 +25,46 @@ html, body, .stApp, [class*="css"] {
 }
 h1, h2, h3 { color: #f5c518 !important; text-align: right; }
 .big-letter { font-size: 72px; font-weight: 700; color: #1db954; text-align: center; }
+.big-letter-unknown { font-size: 54px; font-weight: 700; color: #ff9f43; text-align: center; }
 .word-line { font-size: 30px; color: #ffffff; text-align: center; direction: rtl; }
+.word-line .raw { color: #9aa4b5; font-size: 22px; }
+
 .dict-card {
-  background: #1b1f27; border: 1px solid #2a3040; border-radius: 12px;
-  padding: 10px; margin: 4px; text-align: center;
+  background: linear-gradient(180deg, #1c2230, #161b25);
+  border: 2px solid #2a3040; border-radius: 14px;
+  padding: 10px; margin: 8px 0; text-align: center;
+  transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+  cursor: default;
 }
-.dict-card img { border-radius: 8px; width: 100%; }
-.dict-name { font-weight: 700; color: #f5c518; margin-top: 6px; }
-.dict-sym { color: #9aa4b5; }
+.dict-card:hover {
+  transform: translateY(-4px);
+  border-color: #f5c518;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, .5);
+}
+.dict-card img { border-radius: 10px; width: 100%; border: 2px solid #2a3040; }
+.dict-name { font-weight: 700; color: #f5c518; margin-top: 6px; font-size: 18px; }
+.dict-sym { color: #9aa4b5; font-size: 15px; }
+.cat-shamsi { border-color: #9c7c1e; }
+.cat-shamsi:hover { border-color: #ffd34d; box-shadow: 0 8px 20px rgba(245, 197, 24, .18); }
+.cat-qamari { border-color: #14683a; }
+.cat-qamari:hover { border-color: #1db954; box-shadow: 0 8px 20px rgba(29, 185, 84, .18); }
+.cat-markab { border-color: #5b3fa8; }
+.cat-markab:hover { border-color: #a78bfa; box-shadow: 0 8px 20px rgba(167, 139, 250, .18); }
+
+.badge {
+  display: inline-block; font-size: 11px; font-weight: 700; border-radius: 999px;
+  padding: 2px 10px; margin: 2px; color: #0e1117; letter-spacing: .3px;
+}
+.badge-shamsi { background: linear-gradient(135deg, #ffd34d, #ff9f43); }
+.badge-qamari { background: linear-gradient(135deg, #2ec4b6, #1db954); }
+.badge-markab { background: linear-gradient(135deg, #a78bfa, #7c3aed); color: #ffffff; }
+.badge-index { background: #2a3040; color: #9aa4b5; }
+.badge-hand-ok { background: linear-gradient(135deg, #1db954, #2ec4b6); font-size: 14px; }
+.badge-hand-unknown { background: linear-gradient(135deg, #ff9f43, #f5c518); font-size: 14px; }
+.badge-hand-wait { background: #2a3040; color: #9aa4b5; font-size: 14px; }
+
+.conf-wrap { background: #2a3040; border-radius: 999px; height: 10px; width: 100%; margin: 8px auto 0; max-width: 340px; }
+.conf-fill { height: 10px; border-radius: 999px; background: linear-gradient(90deg, #1db954, #f5c518); }
 .meta { color: #9aa4b5; text-align: center; }
 </style>
 """
@@ -45,6 +78,27 @@ def _load_class_map():
     except Exception:
         return {str(i): {"sym": engine.CLASS_SYMS[i], "name": engine.CLASS_NAMES[i]}
                 for i in range(engine.EXPECTED_CLASSES)}
+
+
+# فئات حروف عربية موضوعية (شمسية/قمرية) + مركّبات — تلوين البطاقات بلا افتراضات في شكل اليد
+SHAMSI_LETTERS = {24, 25, 4, 26, 19, 31, 21, 22, 20, 6, 23, 5, 16, 18}
+QAMARI_LETTERS = {2, 3, 12, 11, 14, 0, 9, 7, 8, 13, 17, 10, 28, 30}
+CAT_LABEL = {"shamsi": "شمسية", "qamari": "قمرية", "markab": "خاصة/مركبة"}
+
+
+def _cat(idx):
+    if idx in SHAMSI_LETTERS:
+        return "shamsi"
+    if idx in QAMARI_LETTERS:
+        return "qamari"
+    return "markab"
+
+
+def _img_uri(idx):
+    p = engine.DICT_DIR / f"class_{idx:02d}.png"
+    if not p.exists():
+        return None
+    return "data:image/png;base64," + base64.b64encode(p.read_bytes()).decode()
 
 
 tab_live, tab_dict = st.tabs(["\U0001F3A5 ترجمة لحظية", "\U0001F4D6 القاموس"])
@@ -90,6 +144,7 @@ with tab_live:
             st.info("أضف مفتاح Groq في .env ليُصحَّح النص تلقائياً", icon="\U0001F511")
 
     frame_ph = st.empty()
+    hand_ph = st.empty()
     letter_ph = st.empty()
     word_ph = st.empty()
     status_ph = st.empty()
@@ -112,16 +167,33 @@ with tab_live:
         out = st.session_state.pipeline.update(frame)
         frame_ph.image(out["overlay"], channels="BGR", width="stretch")
 
+        if not out["hand"]:
+            hand_md = "<span class='badge badge-hand-wait'>لا يد — اعرض إشارتك</span>"
+        elif out["idx"] is not None:
+            hand_md = "<span class='badge badge-hand-ok'>🖐 يد مكتشفة — الحرف واضح</span>"
+        elif out.get("unknown"):
+            hand_md = "<span class='badge badge-hand-unknown'>🖐 غير معروف — مش واضح، رجّع وضع اليد</span>"
+        else:
+            hand_md = "<span class='badge badge-hand-wait'>يد مرئية — بانتظار الوضوح...</span>"
+        hand_ph.markdown(f"<div style='text-align:center; margin-bottom:10px'>{hand_md}</div>",
+                         unsafe_allow_html=True)
+
         if out["hand"] and out["idx"] is not None:
+            pct = int(out["conf"] * 100)
             letter_ph.markdown(
                 f"<div class='big-letter'>{engine.CLASS_NAMES[out['idx']]}</div>"
-                f"<div class='meta'>({engine.ENG_LABELS[out['idx']]} — الثقة "
-                f"{out['conf']:.2f})</div>", unsafe_allow_html=True)
+                f"<div class='meta'>{engine.ENG_LABELS[out['idx']]} — الثقة {out['conf']:.2f}</div>"
+                f"<div class='conf-wrap'><div class='conf-fill' style='width:{pct}%'></div></div>",
+                unsafe_allow_html=True)
+        elif out.get("unknown"):
+            letter_ph.markdown("<div class='big-letter-unknown'>غير معروف</div>"
+                               "<div class='meta'>مش واضح — غيّر وضع يدك ليُحسم الحرف</div>",
+                               unsafe_allow_html=True)
         elif out["hand"]:
             letter_ph.markdown("<div class='meta'>يد مرئية بلا التزام بعد</div>",
                                unsafe_allow_html=True)
         else:
-            letter_ph.markdown("<div class='meta'>لا يد — رجاءً اعرض إشارتك</div>",
+            letter_ph.markdown("<div class='meta'>بانتظار اليد...</div>",
                                unsafe_allow_html=True)
 
         if out["word"]:
@@ -133,22 +205,31 @@ with tab_live:
         if out["events"]["finalized"] and out["events"]["finalized"] != st.session_state.last_final:
             st.session_state.last_final = out["events"]["finalized"]
             st.session_state.history.append(
-                (out["corrected"]["text"], out["corrected"]["source"]))
+                (out["events"]["finalized"], out["corrected"]["text"], out["corrected"]["source"]))
             if out["audio"]:
                 audio_ph.audio(out["audio"], format="audio/mp3", autoplay=True)
 
-        history_md = "".join(
-            f"{t} <span class='meta'>({'Groq' if s == 'groq' else 'raw'}) ·</span> "
-            for t, s in st.session_state.history)
-        history_ph.markdown(f"<div class='word-line'>{history_md}</div>",
-                            unsafe_allow_html=True)
+        history_items = []
+        for raw, text, src in st.session_state.history:
+            if src == "groq" and raw != text:
+                history_items.append(f"<span class='raw'>{raw} ← </span>{text}"
+                                     "<span class='badge badge-qamari'>Groq</span>")
+            else:
+                tag = "خام" if src == "raw" else "Groq"
+                history_items.append(f"{text}<span class='badge badge-index'>{tag}</span>")
+        history_ph.markdown(
+            f"<div class='word-line' style='direction:rtl'>{'&nbsp;&nbsp;'.join(history_items)}</div>"
+            if history_items else "<div class='meta'>سجلّ الكلمات فارغ — مثل: «س ← ل ← ا ← م»</div>",
+            unsafe_allow_html=True)
 
 
     live_loop()
 
     st.divider()
-    st.markdown("**كيف تعمل:** اعرض إشارة أمام الكاميرا ≥ 3 إطارات متتالية بثقة ≥ 0.85 "
-                "ليُلتزم الحرف، ثم انتظر بلا يد 2.5 ثانية لتُقفل الكلمة وتُنطق.")
+    st.markdown("**كيف تعمل:** اعرض إشارة أمام الكاميرا ≥ 5 إطارات متتالية بثقة ≥ 0.90 مع "
+                "تحقّق هندسي (ألف/سين/فاء/ثاء معتمدة عند التحقق) ليُلتزم الحرف. إن عارضت الهندسة "
+                "تصنيف CNN يُعرض «غير معروف» بدل حرف مخطئ. ثم انتظر بلا يد 2.5 ثانية لتُقفل "
+                "الكلمة وتُنطق (مع تصحيح Groq التلقائي إن توفّر).")
 
 with tab_dict:
     st.title("قاموس الإشارات")
@@ -156,15 +237,18 @@ with tab_dict:
     cols = st.columns(4)
     for i in range(engine.EXPECTED_CLASSES):
         info = cmap.get(str(i), {"sym": engine.CLASS_SYMS[i], "name": engine.CLASS_NAMES[i]})
-        img = engine.DICT_DIR / f"class_{i:02d}.png"
+        cat = _cat(i)
+        uri = _img_uri(i)
+        card = f"<div class='dict-card cat-{cat}' style='margin-top:14px'>"
+        if uri:
+            card += f"<img src='{uri}' alt='{info['name']}'/>"
+        card += (f"<div style='margin-top:8px'>"
+                 f"<span class='badge badge-{cat}'>{CAT_LABEL[cat]}</span>"
+                 f"<span class='badge badge-index'>#{i:02d}</span></div>")
+        card += (f"<div class='dict-sym'>{info['sym']}</div>"
+                 f"<div class='dict-name'>{info['name']}</div></div>")
         with cols[i % 4]:
-            if img.exists():
-                st.image(str(img), width="stretch")
-            st.markdown(
-                f"<div class='dict-card'><div class='dict-sym'>{info['sym']}</div>"
-                f"<div class='dict-name'>{info['name']}</div>"
-                f"<div class='meta'>#{i:02d}</div></div>",
-                unsafe_allow_html=True)
+            st.markdown(card, unsafe_allow_html=True)
 
-st.markdown("<div class='meta' style='margin-top:24px'>M3–M10 مكتملة — واجهة محلية "
+st.markdown("<div class='meta' style='margin-top:24px'>M3–M11 + P1 (تحقّق هندسي) مكتملة — واجهة محلية "
             "Streamlit · نموذج val 95.18% · 32 إشارة ArASL</div>", unsafe_allow_html=True)
