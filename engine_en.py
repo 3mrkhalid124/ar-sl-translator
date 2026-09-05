@@ -323,13 +323,19 @@ def process_frame_en(frame, ts_ms: int, prof=None):
             idx, conf, margin = classify_en_softmax(patch)
             ar._profile_time(prof, "classify", _t0)
             _t0 = time.perf_counter()
-            if not margin_accept(margin) or not ar.validate_geometry(landmarks, idx, patterns=SIGNPAT_EN):
+            ok_geo = ar.validate_geometry(landmarks, idx, patterns=SIGNPAT_EN)
+            ok_mar = margin_accept(margin)
+            ar._trace("raw_conf=", f"{conf:.4f}", "class=", CLASS_EN_SYMS[idx] if 0 <= idx < EN_CLASSES else None,
+                      "margin=", f"{margin:.4f}", "margin_ok=", ok_mar,
+                      "geo=", "accept" if ok_geo else "REJECT")
+            if not ok_mar or not ok_geo:
                 idx, conf = None, 0.0
                 result["unknown"] = True
             ar._profile_time(prof, "geometry", _t0)
             result.update(idx=idx, label=None if idx is None else CLASS_EN_SYMS[idx],
                           label_en=None if idx is None else CLASS_EN_SYMS[idx],
                           conf=conf, bbox=bbox)
+            ar._trace("result=", {k: result[k] for k in ("hand", "unknown", "idx", "label", "conf")})
             _t0 = time.perf_counter()
             h, w = frame.shape[:2]
             for lm in landmarks:
@@ -388,7 +394,11 @@ class SignSequencerEN:
                 self._committed_idx = idx
                 self._votes[idx] = 0
             events["word"] = "".join(CLASS_EN_SYMS[i] for i in self.word)
+            ar._trace("feed_en", "conf=", f"{conf:.4f}", "th=", self.conf_threshold,
+                      "commit=", "YES" if events["committed"] else "no",
+                      "votes=", dict(self._votes), "word=", repr(events["word"]))
         elif hand_seen:
+            ar._trace("feed_en", "hand-only(unknown)", "no_commit")
             self.last_hand_time = ts
             self._votes = {}
             self._last_idx = None
@@ -406,6 +416,21 @@ class SignSequencerEN:
         """يقفل الكلمة الحالية في finalized_word ويصفّر المخزن."""
         self.finalized_word = "".join(CLASS_EN_SYMS[i] for i in self.word)
         self.word = []
+
+    def backspace(self):
+        """تحكم يدوي: حذف آخر حرف مُلتزم (فوري، بلا انتظار صمت)."""
+        if self.word:
+            self.word.pop()
+        self._committed_idx = None
+        self._last_idx = None
+        self._votes = {}
+
+    def clear(self):
+        """تحكم يدوي: مسح كل الكلمة الحية (فوري، بلا انتظار صمت)."""
+        self.word = []
+        self._committed_idx = None
+        self._last_idx = None
+        self._votes = {}
 
 
 class LivePipelineEN:

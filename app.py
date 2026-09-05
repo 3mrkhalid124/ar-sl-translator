@@ -371,6 +371,20 @@ with tab_live:
             f"{tr('checkpoint', 'النموذج')}: <b>{_PCMODEL.name}</b></div>",
             unsafe_allow_html=True)
 
+    wb = st.columns([1, 1, 3])
+    with wb[0]:
+        if st.button(tr("✕ Delete last letter", "✕ حذف آخر حرف"), width="stretch"):
+            pl = st.session_state.get(pkey)
+            if pl is not None and getattr(pl, "seq", None) is not None:
+                pl.seq.backspace()
+            st.session_state.pop(f"rev_{lang}", None)
+    with wb[1]:
+        if st.button(tr("🗑 Clear all", "🗑 مسح الكل"), width="stretch"):
+            pl = st.session_state.get(pkey)
+            if pl is not None and getattr(pl, "seq", None) is not None:
+                pl.seq.clear()
+            st.session_state.pop(f"rev_{lang}", None)
+
     cam_col, res_col = st.columns([3, 4])
     with cam_col:
         frame_ph = st.empty()
@@ -420,8 +434,12 @@ with tab_live:
         hand_ph.markdown(f"<div style='text-align:center; margin-bottom:10px'>{hand_md}</div>",
                          unsafe_allow_html=True)
 
-        if out["hand"] and out["idx"] is not None:
+        if out["hand"] and out["idx"] is not None and not out.get("unknown"):
             pct = int(out["conf"] * 100)
+            if engine._TRACE:
+                print("[TRACE UI] big-slot shows candidate", repr(out["label"]),
+                      f"conf={out['conf']:.4f}", "th=", engine.CONF_THRESHOLD,
+                      "BELOW_TH_DISPLAYED=", out["conf"] < engine.CONF_THRESHOLD, flush=True)
             if IS_EN:
                 letter_ph.markdown(
                     f"<div class='big-slot'><div class='big-letter'>{out['label']}</div>"
@@ -453,6 +471,8 @@ with tab_live:
                 unsafe_allow_html=True)
 
         # تكوين بلاطات الكلمة الحية + كشف AI (reveal) عند الإغلاق
+        if engine._TRACE:
+            print("[TRACE UI] tiles_word=", repr(out["word"]), "commit_count=", len(out["word"] or ""), flush=True)
         if out["word"]:
             st.session_state.pop(f"rev_{lang}", None)
             tiles_ph.markdown(_tile_md(out["word"], lang), unsafe_allow_html=True)
@@ -509,8 +529,6 @@ with tab_live:
 
 with tab_dict:
     st.title("Sign Language Dictionary" if IS_EN else "قاموس الإشارات")
-    st.caption(tr("Visual handshape category (educational reference — not a live detection result)",
-                  "تصنيف بصري لشكل اليد (مرجع تعليمي — ليس نتيجة كشف حي)"), unsafe_allow_html=True)
     if IS_EN:
         n = engine_en.EN_CLASSES
         try:
@@ -530,7 +548,7 @@ with tab_dict:
             return "data:image/png;base64," + base64.b64encode(p.read_bytes()).decode() if p.exists() else None
 
         def _dict_badge(i, cat):
-            return f"<span class='badge badge-{cat}'>EN</span><span class='badge badge-index'>#{i:02d}</span>"
+            return f"<span class='badge badge-{cat}'>EN</span>"
     else:
         n = engine.EXPECTED_CLASSES
         cmap_ar = _load_class_map()
@@ -545,8 +563,7 @@ with tab_dict:
             return _img_uri(i)
 
         def _dict_badge(i, cat):
-            return (f"<span class='badge badge-{cat}'>{tr(_VIS_LABEL_EN[cat], _VIS_LABEL[cat])}</span>"
-                    f"<span class='badge badge-index'>#{i:02d}</span>")
+            return f"<span class='badge badge-{cat}'>{tr(_VIS_LABEL_EN[cat], _VIS_LABEL[cat])}</span>"
 
     cols = st.columns(4)
     for i in range(n):
@@ -557,8 +574,7 @@ with tab_dict:
         if uri:
             card += f"<img src='{uri}' alt='{info['name']}' loading='lazy'/>"
         card += f"<div style='margin-top:8px'>{_dict_badge(i, cat)}</div>"
-        card += (f"<div class='dict-sym'>{info['sym']}</div>"
-                 f"<div class='dict-name'>{info['name']}</div></div>")
+        card += f"<div class='dict-name'>{info['name']}</div></div>"
         with cols[i % 4]:
             st.markdown(card, unsafe_allow_html=True)
 

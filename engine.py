@@ -10,6 +10,7 @@ USAGE (أدوات تحقق ذاتي في الطرفية):
 import json
 import logging
 import logging.handlers
+import os
 import queue
 import sys
 import time
@@ -58,6 +59,14 @@ CONF_THRESHOLD = 0.90  # Priority 1: 0.85 → 0.90 (يخفف false positives م�
 DEBOUNCE_FRAMES = 5  # Priority 1: 3 → 5
 SILENCE_SECONDS = 2.5
 MAX_WORD_LEN = 40
+
+# --- [Diagnosis 1] تتبّع تشخيصي مؤقت: يطبع الأرقام الفعلية لكل إطار عند ENGINE_TRACE=1 (بلا كلفة حين يغيب) ---
+_TRACE = os.getenv("ENGINE_TRACE") == "1"
+
+
+def _trace(*args):
+    if _TRACE:
+        print("[TRACE]", *args, flush=True)
 
 # أداء (Performance — Polish9): الكاميرا مقيّدة بعرض معالجة واحد + تواقيت متزايدة عالمياً.
 LIVE_MAX_WIDTH = 640  # تصغير مبكر لفريم الكاميرا قبل المعالجة/الإرسال (كشف اليد شبه ثابت التكلفة)
@@ -618,12 +627,15 @@ def process_frame(frame, ts_ms: int, prof=None):
             _t0 = time.perf_counter()
             ok_geo = validate_geometry(landmarks, idx)
             _profile_time(prof, "geometry", _t0)
+            _trace("raw_conf=", f"{conf:.4f}", "class=", CLASS_NAMES[idx] if 0 <= idx < len(CLASS_NAMES) else None,
+                   "geo=", "accept" if ok_geo else "REJECT")
             if not ok_geo:
                 idx, conf = None, 0.0
                 result["unknown"] = True
             result.update(idx=idx, label=None if idx is None else CLASS_NAMES[idx],
                           label_en=None if idx is None else ENG_LABELS[idx],
                           conf=conf, bbox=bbox)
+            _trace("result=", {k: result[k] for k in ("hand", "unknown", "idx", "label", "conf")})
             _t0 = time.perf_counter()
             h, w = frame.shape[:2]
             for lm in landmarks:
@@ -637,6 +649,8 @@ def process_frame(frame, ts_ms: int, prof=None):
                 cv2.rectangle(overlay, (x0, y0), (x1, y1), (0, 255, 0), 2)
                 cv2.putText(overlay, f"{result['label_en']} {conf:.2f}", (x0, max(16, y0 - 8)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            _trace("overlay_text=", f"{result['label_en']} {conf:.2f}" if not result['unknown'] else "لا نص",
+                   "shown_any_conf_below_th", result["unknown"] is False and conf < CONF_THRESHOLD)
             _profile_time(prof, "draw", _t0)
     return overlay, result
 
@@ -708,9 +722,13 @@ class SignSequencer:
                 self._committed_idx = idx
                 self._votes[idx] = 0
             events["word"] = "".join(CLASS_SYMS[i] for i in self.word)
+            _trace("feed", "hand+idx", "conf=", f"{conf:.4f}", "th=", self.conf_threshold,
+                   "commit=", "YES" if events["committed"] else "no",
+                   "votes=", dict(self._votes), "word=", repr(events["word"]))
         elif hand_seen:
             # Priority 1 — يد مرئية بلا تصنيف (رفض هندسي → 'غير معروف'): تُحدَّث last_hand_time فقط،
             # تُصفَّر الأصوات، بلا التزام حرف وبلا إنهاء كلمة مبكر حتى تختفي اليد أو يتوضح الوضع.
+            _trace("feed", "hand-only(unknown)", "no_idx", "no_commit", "word=", repr(events["word"]))
             self.last_hand_time = ts
             self._votes = {}
             self._last_idx = None
@@ -728,6 +746,22 @@ class SignSequencer:
         """يقفل الكلمة الحالية في finalized_word ويصفّر المخزن."""
         self.finalized_word = "".join(CLASS_SYMS[i] for i in self.word)
         self.word = []
+
+    def backspace(self):
+        """تحكم يدوي: حذف آخر حرف مُلتزم في الكلمة الحية (فوري، بلا انتظار صمت).
+        يعيد تهيئة بوابات عدم-التكرار حتى يمكن إعادة التزام نفس الحرف بعد الحذف."""
+        if self.word:
+            self.word.pop()
+        self._committed_idx = None
+        self._last_idx = None
+        self._votes = {}
+
+    def clear(self):
+        """تحكم يدوي: مسح كل الكلمة الحية (فوري، بلا انتظار صمت)."""
+        self.word = []
+        self._committed_idx = None
+        self._last_idx = None
+        self._votes = {}
 
 
 # ---------------------------------------------------------------- M7: Groq تصحيح
