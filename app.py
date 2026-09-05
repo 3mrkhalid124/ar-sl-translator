@@ -82,6 +82,7 @@ h1, h2, h3 { color: #f5c518 !important; text-align: right; }
 @keyframes bubble-in { 0% { opacity: 0; transform: translateY(14px) scale(.92); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
 
 .big-slot { min-height: 86px; text-align: center; }
+.stImage img { max-height: 380px; width: auto !important; margin: 0 auto; display: block; object-fit: contain; }
 .big-letter, .big-letter-unknown { animation: pop-in .2s ease 1; }
 .big-letter-unknown { color: #ff9f43; }
 
@@ -351,15 +352,18 @@ with tab_live:
             st.info(tr("Set GROQ_API_KEY in .env to auto-correct text",
                        "أضف مفتاح Groq في .env ليُصحَّح النص تلقائياً"), icon="\U0001F511")
 
-    frame_ph = st.empty()
-    hand_ph = st.empty()
-    letter_ph = st.empty()
-    reveal_ph = st.empty()
-    tiles_ph = st.empty()
-    status_ph = st.empty()
-    audio_ph = st.empty()
-    wave_ph = st.empty()
-    history_ph = st.empty()
+    cam_col, res_col = st.columns([3, 4])
+    with cam_col:
+        frame_ph = st.empty()
+        hand_ph = st.empty()
+    with res_col:
+        letter_ph = st.empty()
+        reveal_ph = st.empty()
+        tiles_ph = st.empty()
+        status_ph = st.empty()
+        audio_ph = st.empty()
+        wave_ph = st.empty()
+        history_ph = st.empty()
 
 
     @st.fragment(run_every=0.1)
