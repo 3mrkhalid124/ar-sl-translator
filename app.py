@@ -4,6 +4,7 @@
 import sys
 import base64
 import json
+import time
 from pathlib import Path
 
 import cv2
@@ -68,10 +69,51 @@ h1, h2, h3 { color: #f5c518 !important; text-align: right; }
 .badge-hand-unknown { background: linear-gradient(135deg, #ff9f43, #f5c518); font-size: 14px; }
 .badge-hand-wait { background: #2a3040; color: #9aa4b5; font-size: 14px; }
 
-.conf-wrap { background: #2a3040; border-radius: 999px; height: 10px; width: 100%; margin: 8px auto 0; max-width: 340px; }
+.conf-wrap { background: #2a3040; border-radius: 999px; height: 10px; width: 100%; margin: 8px auto 0; max-width: 340px; position: relative; }
 .conf-fill { height: 10px; border-radius: 999px; background: linear-gradient(90deg, #1db954, #f5c518); transition: width .12s ease-out, opacity .12s ease-out; }
+.conf-wrap::after { content: ""; position: absolute; left: 90%; top: -3px; bottom: -3px; width: 2px; background: rgba(255, 255, 255, .35); }
 .badge, .big-letter, .big-letter-unknown { transition: opacity .12s ease-out; }
-.meta { color: #9aa4b5; text-align: center; }
+.meta { color: #9aa4b5; text-align: center; min-height: 20px; }
+
+/* ---- البند 1: أنيميشن تكوين الحرف/الكلمة (بلاطات + كشف Groq + فقاعات) ---- */
+@keyframes pop-in { 0% { opacity: 0; transform: scale(.78) translateY(6px); } 100% { opacity: 1; transform: scale(1) translateY(0); } }
+@keyframes tile-in { 0% { opacity: 0; transform: translateY(10px) scale(.7) rotate(-2deg); } 70% { transform: translateY(-2px) scale(1.06); } 100% { opacity: 1; transform: translateY(0) scale(1) rotate(0); } }
+@keyframes bubble-in { 0% { opacity: 0; transform: translateY(14px) scale(.92); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+
+.big-slot { min-height: 86px; text-align: center; }
+.big-letter, .big-letter-unknown { animation: pop-in .2s ease 1; }
+.big-letter-unknown { color: #ff9f43; }
+
+/* تراكم الكلمة: 40 خانة ثابتة — البلاطة تُملأ عند كل حرف مُلتزم (transition على نفس الخانة) */
+.word-stage { display: flex; flex-direction: column; align-items: center; gap: 4px; min-height: 74px; margin-top: 10px; }
+.tilerow { display: flex; gap: 4px; min-height: 56px; align-items: center; justify-content: center; }
+.tile { width: 40px; height: 54px; flex: none; display: inline-flex; align-items: center; justify-content: center;
+        border-radius: 9px; border: 1.5px solid #1db954; background: linear-gradient(160deg, #123524, #0e2016);
+        color: #e8f7ee; font-weight: 700; font-size: 27px; box-shadow: 0 4px 12px rgba(29, 185, 84, .22);
+        animation: tile-in .22s ease 1; }
+.tile-spacer { width: 0; flex: none; }
+.tile-count { color: #5f6b7d; font-size: 12px; }
+
+/* كشف فاعلية AI عند إغلاق الكلمة: يخفت الخام ويدخل المصحح بصورة أكبر */
+.reveal-stage { display: flex; flex-direction: column; align-items: center; gap: 4px; min-height: 66px; margin-top: 8px; }
+.reveal-stage .rev-raw { display: flex; gap: 3px; opacity: 1; transition: opacity .3s ease-out; }
+.reveal-stage .rev-raw .tile { width: 26px; height: 34px; font-size: 18px; border-color: #9aa4b5; box-shadow: none;
+                               background: linear-gradient(160deg, #1c2230, #141922); }
+.reveal-stage .rev-cor { opacity: 0; transform: translateY(8px) scale(.9); transition: opacity .3s ease-out, transform .3s ease-out;
+                          font-size: 32px; font-weight: 700; color: #f5c518; }
+.reveal-stage.done .rev-raw { opacity: 0; }
+.reveal-stage.done .rev-cor { opacity: 1; transform: translateY(0) scale(1); }
+
+/* سجل الجمل كفقاعات شات */
+.bub-wrap { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.bub { align-self: flex-start; max-width: 82%; padding: 8px 14px; border-radius: 14px 14px 14px 4px;
+       background: linear-gradient(160deg, #1c2230, #151a25); border: 1px solid #2a3040; font-size: 21px;
+       color: #e8eaed; box-shadow: 0 3px 10px rgba(0, 0, 0, .35); animation: bubble-in .28s ease 1; }
+.bub-ai { align-self: flex-end; border-radius: 14px 14px 4px 14px; background: linear-gradient(160deg, #332d14, #221b08);
+          border-color: #f5c518; color: #ffedb0; }
+.bub .raw-mini { display: block; font-size: 13px; color: #9aa4b5; padding-bottom: 2px; }
+.bub .badge { vertical-align: middle; }
+.bub-slot { display: none; }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -104,6 +146,58 @@ def _img_uri(idx):
     if not p.exists():
         return None
     return "data:image/png;base64," + base64.b64encode(p.read_bytes()).decode()
+
+
+# ---- بند 1: عرض «تكوين» الحروف/الكلمات — HTML فقط، من بيانات الحالة نفسها (بلا لمس منطق) ----
+_MAX_TILES = 40
+_HIST_SLOTS = 8
+
+
+def _tile_md(word, lang):
+    """خط الكلمة الحي: 40 خانة ثابتة، البلاطات تُملأ مع كل حرف مُلتزم (تلوين مرجعي فقط)."""
+    slots = []
+    for i in range(_MAX_TILES):
+        if i < len(word):
+            slots.append(f"<span class='tile'>{word[i]}</span>")
+        else:
+            slots.append("<span class='tile-spacer'></span>")
+    return f"<div class='word-stage'><div class='tilerow'>{''.join(slots)}</div>" \
+           f"<div class='tile-count'>{len(word)}/{_MAX_TILES}</div></div>"
+
+
+def _reveal_md(rev, lang):
+    """أنيميشن كشف فاعلية AI: التسلسل الخام يخفت ← المصحح يدخل أكبر/بلون مميز."""
+    raw, text, src = rev
+    ai = src == "groq" and raw != text
+    badge = ("<span class='badge badge-qamari'>AI ✨</span>" if ai
+             else "<span class='badge badge-index' style='direction:rtl'>خام</span>")
+    raw_tiles = "".join(f"<span class='tile'>{c}</span>" for c in raw)
+    return ("<div class='reveal-stage done' dir='" + ("ltr" if IS_EN else "rtl") + "'>"
+            f"<div class='rev-raw'>{raw_tiles}</div>"
+            f"<div class='rev-cor'>{text} {badge}</div></div>")
+
+
+def _history_md(items, lang):
+    """رسوم آخر الكلمات كفقاعات شات (آخرها أسفل) — عرض فقط، بلا تعديل لبيانات الحالة."""
+    if not items:
+        return ("<div class='meta'>History empty — e.g. «H E L L O»</div>"
+                if IS_EN else "<div class='meta'>سجلّ الكلمات فارغ — مثل: «س ← ل ← ا ← م»</div>")
+    items = items[-_HIST_SLOTS:]
+    out = []
+    for i in range(_HIST_SLOTS):
+        idx = len(items) - _HIST_SLOTS + i
+        if 0 <= idx < len(items):
+            raw, text, src = items[idx]
+            ai = src == "groq" and raw != text
+            tag = ("<span class='badge badge-qamari'>AI ✨</span>" if ai
+                   else "<span class='badge badge-index'>"
+                        + ("raw" if (src == "raw" and IS_EN) else ("خام" if src == "raw" else "Groq"))
+                        + "</span>")
+            mini = f"<span class='raw-mini'>{raw}</span>" if ai else ""
+            out.append(f"<div class='bub {'bub-ai' if ai else ''}' dir='rtl'>{mini}{text}{tag}</div>")
+        else:
+            out.append("<div class='bub-slot'></div>")
+    return "<div class='bub-wrap'>" + "".join(out) + "</div>"
 
 
 # --- مبدّل اللغة: يحوّل النموذج النشط/خريطة الفئات/الاتجاه/اللغة الصوتية/صور القاموس — بلا لمس العربي
@@ -170,7 +264,8 @@ with tab_live:
     frame_ph = st.empty()
     hand_ph = st.empty()
     letter_ph = st.empty()
-    word_ph = st.empty()
+    reveal_ph = st.empty()
+    tiles_ph = st.empty()
     status_ph = st.empty()
     audio_ph = st.empty()
     history_ph = st.empty()
@@ -215,61 +310,60 @@ with tab_live:
             pct = int(out["conf"] * 100)
             if IS_EN:
                 letter_ph.markdown(
-                    f"<div class='big-letter'>{out['label']}</div>"
+                    f"<div class='big-slot'><div class='big-letter'>{out['label']}</div>"
                     f"<div class='meta'>confidence {out['conf']:.2f}</div>"
-                    f"<div class='conf-wrap'><div class='conf-fill' style='width:{pct}%'></div></div>",
+                    f"<div class='conf-wrap'><div class='conf-fill' style='width:{pct}%'></div></div>"
+                    f"</div>",
                     unsafe_allow_html=True)
             else:
                 letter_ph.markdown(
-                    f"<div class='big-letter'>{out['label']}</div>"
+                    f"<div class='big-slot'><div class='big-letter'>{out['label']}</div>"
                     f"<div class='meta'>{out['label_en']} — الثقة {out['conf']:.2f}</div>"
-                    f"<div class='conf-wrap'><div class='conf-fill' style='width:{pct}%'></div></div>",
+                    f"<div class='conf-wrap'><div class='conf-fill' style='width:{pct}%'></div></div>"
+                    f"</div>",
                     unsafe_allow_html=True)
         elif out.get("unknown"):
             letter_ph.markdown(
-                ("<div class='big-letter-unknown'>Unclear</div>"
-                 "<div class='meta'>Not confident — change your handshape</div>"
-                 if IS_EN else "<div class='big-letter-unknown'>غير معروف</div>"
-                 "<div class='meta'>مش واضح — غيّر وضع يدك ليُحسم الحرف</div>"),
+                ("<div class='big-slot'><div class='big-letter-unknown'>Unclear</div>"
+                 "<div class='meta'>Not confident — change your handshape</div></div>"
+                 if IS_EN else "<div class='big-slot'><div class='big-letter-unknown'>غير معروف</div>"
+                 "<div class='meta'>مش واضح — غيّر وضع يدك ليُحسم الحرف</div></div>"),
                 unsafe_allow_html=True)
         elif out["hand"]:
             letter_ph.markdown(
-                ("<div class='meta'>Hand visible, not committed yet</div>"
-                 if IS_EN else "<div class='meta'>يد مرئية بلا التزام بعد</div>"),
+                ("<div class='big-slot'><div class='meta'>Hand visible, not committed yet</div></div>"
+                 if IS_EN else "<div class='big-slot'><div class='meta'>يد مرئية بلا التزام بعد</div></div>"),
                 unsafe_allow_html=True)
         else:
             letter_ph.markdown(
-                ("<div class='meta'>Waiting for a hand...</div>"
-                 if IS_EN else "<div class='meta'>بانتظار اليد...</div>"),
+                ("<div class='big-slot'><div class='meta'>Waiting for a hand...</div></div>"
+                 if IS_EN else "<div class='big-slot'><div class='meta'>بانتظار اليد...</div></div>"),
                 unsafe_allow_html=True)
 
+        # تكوين بلاطات الكلمة الحية + كشف AI (reveal) عند الإغلاق
         if out["word"]:
-            word_ph.markdown(f"<div class='word-line' style='direction:{_DIRN}'>{out['word']}</div>",
-                             unsafe_allow_html=True)
+            st.session_state.pop(f"rev_{lang}", None)
+            tiles_ph.markdown(_tile_md(out["word"], lang), unsafe_allow_html=True)
+            reveal_ph.markdown("")
         else:
-            word_ph.markdown("")
+            tiles_ph.markdown(_tile_md("", lang), unsafe_allow_html=True)
+            rev = st.session_state.get(f"rev_{lang}")
+            if rev:
+                reveal_ph.markdown(_reveal_md(rev, lang), unsafe_allow_html=True)
+            else:
+                reveal_ph.markdown("")
 
         if out["events"]["finalized"] and out["events"]["finalized"] != st.session_state[lkey]:
             st.session_state[lkey] = out["events"]["finalized"]
             st.session_state[hkey].append(
                 (out["events"]["finalized"], out["corrected"]["text"], out["corrected"]["source"]))
+            st.session_state[f"rev_{lang}"] = (out["events"]["finalized"],
+                                               out["corrected"]["text"], out["corrected"]["source"])
             if out["audio"]:
                 audio_ph.audio(out["audio"], format="audio/mp3", autoplay=True)
                 st.session_state[f"aud_{lang}"] = out["audio"]
 
-        history_items = []
-        for raw, text, src in st.session_state[hkey]:
-            if src == "groq" and raw != text:
-                history_items.append(f"<span class='raw'>{raw} ← </span>{text}"
-                                     "<span class='badge badge-qamari'>Groq</span>")
-            else:
-                tag = "raw" if (src == "raw" and IS_EN) else ("خام" if src == "raw" else "Groq")
-                history_items.append(f"{text}<span class='badge badge-index'>{tag}</span>")
-        history_ph.markdown(
-            f"<div class='word-line' style='direction:{_DIRN}'>{'&nbsp;&nbsp;'.join(history_items)}</div>"
-            if history_items else ("<div class='meta'>History empty — e.g. «H E L L O»</div>"
-                                   if IS_EN else "<div class='meta'>سجلّ الكلمات فارغ — مثل: «س ← ل ← ا ← م»</div>"),
-            unsafe_allow_html=True)
+        history_ph.markdown(_history_md(st.session_state[hkey], lang), unsafe_allow_html=True)
 
 
     live_loop()
