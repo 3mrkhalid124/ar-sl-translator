@@ -186,12 +186,13 @@ with tab_live:
         ok, frame = cap.read()
         if not ok:
             return
+        frame = engine.downscale_live(frame)
         out = st.session_state[pkey].update(frame)
         if out.get("error"):
             st.session_state.live = False
             status_ph.error(out["error"])
             return
-        frame_ph.image(out["overlay"], channels="BGR", width="stretch")
+        frame_ph.image(out["overlay"], channels="BGR", width="stretch", output_format="JPEG")
 
         if not out["hand"]:
             hand_md = ("<span class='badge badge-hand-wait'>No hand — show a sign</span>"

@@ -270,27 +270,39 @@ def margin_accept(margin: float) -> bool:
     return float(margin) >= MARGIN_THRESHOLD_EN
 
 
-def process_frame_en(frame, ts_ms: int):
+def process_frame_en(frame, ts_ms: int, prof=None):
     """مثل process_frame العربي لكن بالنموذج/العلامات الإنجليزية + margin-check بدل SIGNPAT.
     result: {hand, unknown, idx, label, label_en, conf, bbox}.
+    prof (dict اختياري): أزمنة المراحل (detect/crop/classify/geometry/draw).
     إطار None/فارغ → نتيجة فارغة (لا crash)."""
     result = {"hand": False, "unknown": False, "idx": None, "label": None,
               "label_en": None, "conf": 0.0, "bbox": None}
     if frame is None or getattr(frame, "size", 0) == 0:
         return np.zeros((240, 320, 3), dtype=np.uint8), result
+    _t0 = time.perf_counter()
     overlay = frame.copy()
+    ar._profile_time(prof, "copy", _t0)
+    _t0 = time.perf_counter()
     landmarks = ar.detect_hand(frame, ts_ms)  # HandLandmarker مشترك (فاصل متوافق بين اللغتين)
+    ar._profile_time(prof, "detect", _t0)
     if landmarks:
         result["hand"] = True
+        _t0 = time.perf_counter()
         patch, bbox = ar.crop_hand_patch(frame, landmarks, pad=ar.HAND_PAD)
+        ar._profile_time(prof, "crop", _t0)
         if patch is not None:
+            _t0 = time.perf_counter()
             idx, conf, margin = classify_en_softmax(patch)
+            ar._profile_time(prof, "classify", _t0)
+            _t0 = time.perf_counter()
             if not margin_accept(margin):
                 idx, conf = None, 0.0
                 result["unknown"] = True
+            ar._profile_time(prof, "geometry", _t0)
             result.update(idx=idx, label=None if idx is None else CLASS_EN_SYMS[idx],
                           label_en=None if idx is None else CLASS_EN_SYMS[idx],
                           conf=conf, bbox=bbox)
+            _t0 = time.perf_counter()
             h, w = frame.shape[:2]
             for lm in landmarks:
                 cv2.circle(overlay, (int(lm.x * w), int(lm.y * h)), 3, (0, 255, 0), -1)
@@ -303,6 +315,7 @@ def process_frame_en(frame, ts_ms: int):
                 cv2.rectangle(overlay, (x0, y0), (x1, y1), (0, 255, 0), 2)
                 cv2.putText(overlay, f"{result['label_en']} {conf:.2f}", (x0, max(16, y0 - 8)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            ar._profile_time(prof, "draw", _t0)
     return overlay, result
 
 
@@ -371,24 +384,29 @@ class LivePipelineEN:
     """خط أنابيب إنجليزي كامل: detect+crop → CNN+margin → تسلسل → Groq(en) → gTTS(en)."""
 
     def __init__(self, conf_threshold=CONF_THRESHOLD_EN, debounce=DEBOUNCE_FRAMES_EN,
-                 silence_seconds=SILENCE_SECONDS_EN, auto_correct=True):
+                 silence_seconds=SILENCE_SECONDS_EN, auto_correct=True, enable_profile=True):
         self.seq = SignSequencerEN(conf_threshold, debounce, silence_seconds)
         self.t0 = time.monotonic()
         self.auto_correct = auto_correct
+        self._profiler = ar.FrameProfiler(tag="en") if enable_profile else None
 
     def update(self, frame):
-        """إطار BGR → result + events + word + (corrected/audio عند الإنهاء) + error (أو None)."""
+        """إطار BGR → result + events + word + (corrected/audio عند الإنهاء) + error (أو None).
+        timestamp الكاشف عالمي متزايد (Video mode، يشترك مع العربي في HandLandmarker واحد)."""
         try:
             ts = time.monotonic() - self.t0
-            overlay, result = process_frame_en(frame, int(ts * 1000))
+            prof = {}
+            overlay, result = process_frame_en(frame, ar._next_ts_ms(), prof)
             events = self.seq.feed(result["hand"], result["idx"], result["conf"], ts)
-            out = {**result, "events": events, "overlay": overlay,
+            out = {**result, "events": events, "overlay": overlay, "timings": prof,
                    "word": events["word"], "corrected": None, "audio": None, "error": None}
             if events["finalized"]:
                 out["corrected"] = (ar.correct_word(events["finalized"], language="en")
                                     if self.auto_correct
                                     else {"text": events["finalized"], "source": "raw", "api": False})
                 out["audio"] = ar.synthesize_speech(out["corrected"]["text"], lang="en")
+            if self._profiler:
+                self._profiler.note(prof)
             return out
         except Exception as exc:
             ar.log().error("LivePipelineEN.update تعثر: %s", exc)
@@ -396,7 +414,7 @@ class LivePipelineEN:
                     "label_en": None, "conf": 0.0, "bbox": None,
                     "events": {"committed": None, "word": "", "finalized": None},
                     "overlay": np.zeros((240, 320, 3), dtype=np.uint8), "word": "",
-                    "corrected": None, "audio": None,
+                    "timings": {}, "corrected": None, "audio": None,
                     "error": f"Failed to process frame ({exc}) — check camera and EN model."}
 
 

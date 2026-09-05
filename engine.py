@@ -59,6 +59,10 @@ DEBOUNCE_FRAMES = 5  # Priority 1: 3 → 5
 SILENCE_SECONDS = 2.5
 MAX_WORD_LEN = 40
 
+# أداء (Performance — Polish9): الكاميرا مقيّدة بعرض معالجة واحد + تواقيت متزايدة عالمياً.
+LIVE_MAX_WIDTH = 640  # تصغير مبكر لفريم الكاميرا قبل المعالجة/الإرسال (كشف اليد شبه ثابت التكلفة)
+PROFILE_EVERY = 60  # كل كم إطار يُسجَّل متوسط زمن كل مرحلة في السجل (measure, لا تخمين)
+
 # أنماط الأصابع (مراسي مؤكدة من الصور المرجعية الحقيقية في assets/dict/ — بلا افتراض إضافي):
 #   fingers: عدد الأصابع الأربعة الممدودة المتوقع أو None بلا قيد
 #   thumb:   "fold"/"ext"/"any" أو None بلا قيد
@@ -392,6 +396,60 @@ def classify(patch: np.ndarray):
 
 # ---------------------------------------------------------------- M4: كاميرا + يد
 
+_last_ts_ms = 0
+
+
+def _next_ts_ms() -> int:
+    """Timestamp متزايد بصرامة عالمياً (كل العمليات تُشارك HandLandmarker واحداً).
+    VIDEO mode يشترط ts متزايداً؛ timestamp نسبي إلى t0 يَتصفَّر مع كل LivePipeline جديد
+    (تبديل لغة!) فيُخطئ MediaPipe. إصلاح Performance (Polish9) — قِيس بالبنش لا تخميناً."""
+    global _last_ts_ms
+    _last_ts_ms = max(_last_ts_ms + 1, int(time.monotonic() * 1000))
+    return _last_ts_ms
+
+
+def downscale_live(frame, max_width: int = LIVE_MAX_WIDTH):
+    """تصغير مبكر لفريم الكاميرا إلى max_width قبل المعالجة/الإرسال.
+    القياس (Polish9): detect في MediaPipe يكبّر داخلياً فكلفته شبه ثابتة، لكن
+    imencode PNG + الإرسال ينفجران مع الدقة (1080p: 25ms/53KB) → تصغير قبلها."""
+    if frame is None:
+        return frame
+    h, w = frame.shape[:2]
+    if w <= max_width:
+        return frame
+    return cv2.resize(frame, (max_width, int(round(h * max_width / w))),
+                      interpolation=cv2.INTER_AREA)
+
+
+def _profile_time(prof, key, start):
+    """يسجّل زمن مرحلة في prof إن وُجد (بدون كلفة حين غيابه)."""
+    if prof is not None:
+        prof[key] = (time.perf_counter() - start) * 1000
+
+
+class FrameProfiler:
+    """يجمع أزمنة المراحل عبر LivePipeline(+EN) ويُسجّل متوسطها كل window إطاراً في السجل."""
+
+    def __init__(self, window: int = PROFILE_EVERY, tag: str = "live"):
+        self.window = window
+        self.tag = tag
+        self.count = 0
+        self.sums = {}
+
+    def note(self, prof: dict) -> None:
+        if not prof:
+            return
+        self.count += 1
+        for k, v in prof.items():
+            self.sums[k] = self.sums.get(k, 0.0) + float(v)
+        if self.count >= self.window:
+            avg = {k: v / self.count for k, v in self.sums.items()}
+            total = sum(avg.values())
+            log().info("profile[%s] avg_ms/frame total=%.1f  %s",
+                       self.tag, total, "  ".join(f"{k}={v:.1f}" for k, v in avg.items()))
+            self.count = 0
+            self.sums = {}
+
 ENG_LABELS = [
     "Ayn", "Al", "Alef", "Baa", "Dal", "Thaa", "Dhad", "Faa", "Qaf", "Ghain",
     "Haa", "Hha", "Jeem", "Kaf", "Khaa", "Lam-Alef", "Lam", "Meem", "Noon", "Raa",
@@ -514,28 +572,41 @@ def crop_hand_patch(frame, landmarks, pad: float = HAND_PAD):
     return norm, (x0, y0, x1, y1)
 
 
-def process_frame(frame, ts_ms: int):
+def process_frame(frame, ts_ms: int, prof=None):
     """M4: إطار → (overlay_frame, result)
     result: {hand, unknown, idx, label, label_en, conf, bbox}.
+    prof (dict اختياري): يُملأ بأزمنة المراحل (detect/crop/classify/geometry/draw) بالسجلات.
     Priority 1: لو رفض التحقق الهندسي تصنيف CNN → 'غير معروف' (idx=None, conf=0) بدل تثبيت حرف غلط.
     إطار None/فارغ → نتيجة فارغة (لا crash)."""
     result = {"hand": False, "unknown": False, "idx": None, "label": None,
               "label_en": None, "conf": 0.0, "bbox": None}
     if frame is None or getattr(frame, "size", 0) == 0:
         return np.zeros((240, 320, 3), dtype=np.uint8), result
+    _t0 = time.perf_counter()
     overlay = frame.copy()
+    _profile_time(prof, "copy", _t0)
+    _t0 = time.perf_counter()
     landmarks = detect_hand(frame, ts_ms)
+    _profile_time(prof, "detect", _t0)
     if landmarks:
         result["hand"] = True
+        _t0 = time.perf_counter()
         patch, bbox = crop_hand_patch(frame, landmarks)
+        _profile_time(prof, "crop", _t0)
         if patch is not None:
+            _t0 = time.perf_counter()
             idx, conf = classify(patch)
-            if not validate_geometry(landmarks, idx):
+            _profile_time(prof, "classify", _t0)
+            _t0 = time.perf_counter()
+            ok_geo = validate_geometry(landmarks, idx)
+            _profile_time(prof, "geometry", _t0)
+            if not ok_geo:
                 idx, conf = None, 0.0
                 result["unknown"] = True
             result.update(idx=idx, label=None if idx is None else CLASS_NAMES[idx],
                           label_en=None if idx is None else ENG_LABELS[idx],
                           conf=conf, bbox=bbox)
+            _t0 = time.perf_counter()
             h, w = frame.shape[:2]
             for lm in landmarks:
                 cv2.circle(overlay, (int(lm.x * w), int(lm.y * h)), 3, (0, 255, 0), -1)
@@ -548,6 +619,7 @@ def process_frame(frame, ts_ms: int):
                 cv2.rectangle(overlay, (x0, y0), (x1, y1), (0, 255, 0), 2)
                 cv2.putText(overlay, f"{result['label_en']} {conf:.2f}", (x0, max(16, y0 - 8)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            _profile_time(prof, "draw", _t0)
     return overlay, result
 
 
@@ -557,14 +629,13 @@ def run_camera(source=0):
     if not cap.isOpened():
         raise RuntimeError("الكاميرا غير متاحة (source=%s)" % source)
     log().info("كاميرا مفتوحة — اهتزاز/توقف بإغلاقها أو ESC")
-    t_start = time.monotonic()
     try:
         while True:
             ok, frame = cap.read()
             if not ok:
                 log().warning("إطار فاشل")
                 continue
-            ts = int((time.monotonic() - t_start) * 1000)
+            ts = _next_ts_ms()
             overlay, result = process_frame(frame, ts)
             if result["hand"]:
                 log().info("%s (%.2f)", result["label"], result["conf"])
@@ -718,23 +789,28 @@ class LivePipeline:
     """M4+M5+M6 (+M7 عبر correct_word) في نقاط جاهزة للواجهة. process_frame محسوب مرة/إطار."""
 
     def __init__(self, conf_threshold=CONF_THRESHOLD, debounce=DEBOUNCE_FRAMES,
-                 silence_seconds=SILENCE_SECONDS, auto_correct=True):
+                 silence_seconds=SILENCE_SECONDS, auto_correct=True, enable_profile=True):
         self.seq = SignSequencer(conf_threshold, debounce, silence_seconds)
         self.t0 = time.monotonic()
         self.auto_correct = auto_correct
+        self._profiler = FrameProfiler(tag="ar") if enable_profile else None
 
     def update(self, frame):
-        """إطار BGR → result + events + word + (corrected/audio عند الإنهاء) + error (أو None)."""
+        """إطار BGR → result + events + word + (corrected/audio عند الإنهاء) + error (أو None).
+        timestamp زمن السلسلة نسبي (صمت)؛ timestamp الكاشف عالمي متزايد (Video mode)."""
         try:
             ts = time.monotonic() - self.t0
-            overlay, result = process_frame(frame, int(ts * 1000))
+            prof = {}
+            overlay, result = process_frame(frame, _next_ts_ms(), prof)
             events = self.seq.feed(result["hand"], result["idx"], result["conf"], ts)
-            out = {**result, "events": events, "overlay": overlay,
-                   "word": events["word"], "corrected": None, "audio": None, "error": None}
+            out = {**result, "events": events, "overlay": overlay, "timings": prof, "word": events["word"],
+                   "corrected": None, "audio": None, "error": None}
             if events["finalized"]:
                 out["corrected"] = (correct_word(events["finalized"]) if self.auto_correct
                                     else {"text": events["finalized"], "source": "raw", "api": False})
                 out["audio"] = synthesize_speech(out["corrected"]["text"])
+            if self._profiler:
+                self._profiler.note(prof)
             return out
         except Exception as exc:
             # أي فشل في مسار المعالجة (كاميرا/موديل/كاشف) → نتيجة خطأ صريحة بدل إسقاط التطبيق
@@ -743,7 +819,7 @@ class LivePipeline:
                     "label_en": None, "conf": 0.0, "bbox": None,
                     "events": {"committed": None, "word": "", "finalized": None},
                     "overlay": np.zeros((240, 320, 3), dtype=np.uint8), "word": "",
-                    "corrected": None, "audio": None,
+                    "timings": {}, "corrected": None, "audio": None,
                     "error": f"تعذّرت معالجة الإطار ({exc}) — تحقق من الكاميرا والنموذج."}
 
 
@@ -838,6 +914,22 @@ def run_selftest() -> int:
           and ev["word"] == CLASS_SYMS[2])
     ev = seq2.feed(False, None, 0.0, 7.00)   # اليد اختفت → إنهاء بعد الصمت
     check("seq.unknown.then_finalize", ev["finalized"] == CLASS_SYMS[2])
+
+    # ---- Polish9: أداء/تواقيت كاشف اليد (قياس فعلي لا تخمين) ----
+    seq_ts = [_next_ts_ms(), _next_ts_ms(), _next_ts_ms(), _next_ts_ms()]
+    check("live.ts.monotonic", seq_ts == sorted(set(seq_ts)) and len(set(seq_ts)) == 4)
+    small = np.zeros((480, 640, 3), dtype=np.uint8)
+    big = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    check("live.downscale.small.unchanged", downscale_live(small, 640) is small)
+    ds = downscale_live(big, 640)
+    check("live.downscale.big.max640", ds is not None and ds.shape[1] == 640 and ds.shape[0] == 360)
+    prof = {}
+    _, rp = process_frame(small, _next_ts_ms(), prof)
+    check("live.profile.stages", rp["hand"] is False and prof.get("detect", 0) > 0
+          and prof.get("copy", 0) > 0)
+    fpr = FrameProfiler(window=2, tag="t")
+    fpr.note({"detect": 1.0, "crop": 0.5}); fpr.note({"detect": 1.0, "crop": 0.5, "classify": 2.0})
+    check("live.profile.window", fpr.count == 0)  # بعد window=2 يُصفَّر العدّاد
 
     check("groq.key", bool(_load_groq_key()))  # متاح أم لا — معلومة فقط
     check("tts.internet", synthesize_speech("اختبار") is not None)  # إنترنت؛ قابلة للفشل المسموح
