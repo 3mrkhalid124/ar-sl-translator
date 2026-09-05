@@ -300,9 +300,11 @@ st.markdown(
     "background-attachment: fixed; background-size: auto, auto, auto; }}</style>",
     unsafe_allow_html=True)
 
-tab_live, tab_dict = (st.tabs(["\U0001F3A5 Live Translation", "\U0001F4D6 Dictionary"])
-                      if IS_EN else
-                      st.tabs(["\U0001F3A5 ترجمة لحظية", "\U0001F4D6 القاموس"]))
+tab_live, tab_dict, tab_words = (st.tabs(["\U0001F3A5 Live Translation", "\U0001F4D6 Dictionary",
+                                           "\U0001F4AC Common Words"])
+                                 if IS_EN else
+                                 st.tabs(["\U0001F3A5 ترجمة لحظية", "\U0001F4D6 القاموس",
+                                          "\U0001F4AD كلمات شائعة"]))
 
 if IS_EN:
     _PCMODEL = engine_en.MODEL_EN_PATH
@@ -558,6 +560,59 @@ with tab_dict:
         card += (f"<div class='dict-sym'>{info['sym']}</div>"
                  f"<div class='dict-name'>{info['name']}</div></div>")
         with cols[i % 4]:
+            st.markdown(card, unsafe_allow_html=True)
+
+
+_COMMON = (
+    [
+        ("Hello", "H · E · L · L · O",
+         "Salute at the forehead with an open palm, then finish with open fingers."),
+        ("Thank you", "T · H · A · N · K",
+         "Fingertips touch the chin and sweep forward — the widely used ASL gesture."),
+        ("Yes", "Y · E · S",
+         "A fist nodding up and down, or a Y-shaped hand (thumb + pinky out)."),
+        ("No", "N · O",
+         "Index and middle pinch onto the thumb with a shake side to side."),
+        ("Please", "P · L · E · A · S · E",
+         "An open palm circles gently on the chest."),
+        ("Help", "H · E · L · P",
+         "One flat palm rests on the other fist and lifts it upward."),
+    ]
+    if IS_EN else
+    [
+        ("شكراً", "ش · ك · ر · ا",
+         "تُحرَّك اليد مفتوحة من الصدر نحو الخارج (ش) ثم تقوَّس الأصابع نحو الكف (ك) "
+         "وتُعاود الفرد (ر، ا) — كثيراً ما تُؤدَّى كحركة متصلة واحدة."),
+        ("نعم", "ن · ع · م",
+         "يد مرتخية تستقر قرب الذقن مع دوران بسيط: إبهام ملامس للسبابة (ن) ثم قبضة مرتخية (ع، م)."),
+        ("لا", "ل · ا",
+         "السبابة والإبهام في لام قرب العين مع هزّة خفيفة — تُقرأ غالباً كلفتة رأس مرافقة "
+         "لا كتلاوة حروف."),
+        ("أهلاً", "أ · هـ · ل · ا",
+         "كف مفتوح يُرفع قرب الصدر (هـ) فتنبسط الأصابع بالتتابع نحو الأمام (ل، ا)."),
+        ("سلام عليكم", "س · ل · ا · م",
+         "أصابع متلاصقة بارتفاع الصدر (س) ثم انفراج بانبساط الكف (ل، ا) فتُطوى لقبضة مرتخية (م)."),
+        ("أنا", "أ · ن · ا",
+         "السبابة تشير نحو الذات (أ) أو إبهام-سبابة على الصدر (ن) — حركة تعريف بالنفس شائعة."),
+        ("مساعدة", "م · س · ا · ع · د · ة",
+         "تُمَدَّ اليدان نحو الأمام بكفوف مفتوحة (م، س) ثم تُقوَّس الأصابع (ا، ع، د، ة) — "
+         "طلب مفتوح باليدين معاً."),
+    ]
+)
+
+with tab_words:
+    st.title(tr("Common Words", "كلمات شائعة"))
+    st.caption(tr("Educational reference — describes common sign shapes, NOT a live detection result",
+                  "مرجع تعليمي — يصف أشكال إشارات شائعة، وليس نتيجة كشف حي"), unsafe_allow_html=True)
+    wcols = st.columns(4)
+    for i, (word, letters, shape) in enumerate(_COMMON):
+        card = ("<div class='dict-card' style='margin-top:14px; padding:12px'>"
+                f"<span class='badge badge-index'>{tr('reference', 'مرجع')}</span>"
+                f"<div class='dict-name' style='font-size:22px'>{word}</div>"
+                f"<div class='dict-sym'>{letters}</div>"
+                f"<div class='meta' style='min-height:0; font-size:12.5px; text-align:right'>{shape}</div>"
+                "</div>")
+        with wcols[i % 4]:
             st.markdown(card, unsafe_allow_html=True)
 
 st.markdown(tr(
