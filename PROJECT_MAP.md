@@ -14,6 +14,8 @@
 - صوت: **gTTS 2.5.4** (عربي، يحتاج إنترنت).
 - Env: **python-dotenv 1.2.2**.
 - الداتا: **ArASL2018** (Mendeley، DOI 10.17632/y7pckrw6z2.1، CC BY 4.0) — 54,049 صورة رمادي 64×64، 32 class، CSV labels. رابط مباشر بلا تسجيل (sha256 متحقَّق في M2). بديل احتياطي: HF parquet `pain/ArASL_Database_Grayscale`.
+- بيانات إنجليزية (ASL): **Sign Language MNIST** (kagglehub `datamunge/sign-language-mnist`) — 27,455 تدريب + 7,172 اختبار، 24 حرفاً (A–Y بلا J/Z)، يُعاب ليصبح `data/asl_mnist.npz` بنفس فورمات العربي (انظر [ENGLISH_SUPPORT]). التوكن في `~/.kaggle/access_token`.
+- نموذج إنجليزي: `models/cnn_en.pt` (same arch عبر `ar._build_cnn`) + `models/class_map_en.json` — منفصل تماماً عن `models/cnn.pt`/`class_map.json` العربي.
 
 ## [SYSTEM_FLOW]
 
@@ -33,12 +35,13 @@ Logging لا-حظري: queue.Queue + Listener thread → logs/app.log (تصني�
 
 ```
 ar-sl-translator/
-├── app.py        # واجهة Streamlit فقط: CSS مضمّن، تبويب ترجمة لحظية، تبويب قاموس. بلا منطق تعليمي/كشف.
-├── engine.py     # كل المنطق: داتا، CNN (torch)، HandLandmarker cropper، LivePipeline، Groq REST، gTTS، logging.
+├── app.py        # واجهة Streamlit فقط: CSS مضمّن، تبويب ترجمة لحظية، تبويب قاموس، مبدّل لغة (عربي/English). بلا منطق تعليمي/كشف.
+├── engine.py     # كل المنطق العربي: داتا، CNN (torch)، HandLandmarker cropper، LivePipeline، Groq REST، gTTS، logging. correct_word(language=) / synthesize_speech(lang=) يدعمان EN.
+├── engine_en.py  # كل المنطق الإنجليزي (ASL): fetch_en_data، train_en، margin-check، SignSequencerEN، LivePipelineEN، CLI --fetch-en|--train-en|--selftest-en. بلا أي تعديل على engine.py/نماذجه (يستورد ar._build_cnn والثوابت *).
 ├── requirements.txt   # مثبَّت (انظر TECH_STACK). torch من pytorch CPU index فقط.
 ├── .env               # GROQ_API_KEY محلي (يبقى خارج git). .gitignore يستثنيه.
 ├── PROJECT_MAP.md
-├── data/   (الداتا المصدر/parquet) · models/ (cnn.pt + class_map.json) · assets/ (hand_landmarker.task + dict/*.png) · logs/
+├── data/   (arasl.npz + asl_mnist.npz) · models/ (cnn.pt + class_map.json + cnn_en.pt + class_map_en.json) · assets/ (hand_landmarker.task + dict/*.png + dict_en/*.png) · logs/
 └── .venv/ (معزول)
 ```
 
@@ -67,3 +70,23 @@ ar-sl-translator/
 - [NOTE] Groq مفعّل بمفتاح المستخدم في `.env` (M7). عرض «قبل/بعد» التصحيح على الواجهة ضمن P2.
 - [PENDING] قوالب إشارات لكلمات كاملة (توقيع حرف بحرف يُجمع في كلمات) — **تطوير مستقبلي فقط، لا يُنفَّذ الآن**؛ تُستخدم الحروف المفردة مع تصحيح Groq.
 - [NOTE] `models/` مستبعد من git (قابل لإعادة الإنتاج عبر `--train`); `logs/` و`data/*.parquet` أيضاً. `.env` و`.venv` مستبعدان.
+
+## [ENGLISH_SUPPORT]
+
+> وضع ASL إنجليزي منفصل تماماً. القاعدة الحاكمة: أي شك في تعارض مع العربي → افصل الملف؛ **لم يُعدَّل أي من** `models/cnn.pt`, `models/class_map.json`, `data/arasl.npz`, `assets/dict/`, ولا سلوك engine.py العربي (أُضيفت معاملات `language=`/`lang=` افتراضياً `"ar"` خلفية-متوافقة فقط). كل الأرتيfacts الإنجليزية gitignored كما بقية النماذج/البيانات.
+
+**قرارات موثقة (رأس engine_en.py):**
+- البيانات: 28×28 CSV ← resize إلى **64×64 INTER_CUBIC على uint8** (على float كان يتجاوز −0.16..1.15 → أُصلح؛ الناتج float32 [0,1]) → `data/asl_mnist.npz` **بنفس فورمات العربي** `(N,64,64,1)`. الكل 34,627 صورة (27,455 تدريب + 7,172 اختبار مجمّعة)، 24 صنفاً كثافياً بلا J/Z عبر `dense = y>9 ? y-1 : y`.
+- الصور المرجعية للقاموس الإنجليزي: أقرب عيّنة للـ centroid لكل صنف → `assets/dict_en/class_XX.png`.
+- المعمارية: **استيراد `ar._build_cnn` كما هو** (لا نسخ/إعادة كتابة) مع استبدال الرأس فقط `Linear(64*8*8, 24)` عند تعارض out_features.
+- عتبات منسوخة كـ `*_EN` مستقلة: BATCH 512 / CPU_THREADS 6 / LR 2e-3 / TRAIN_FRAC 0.85 / MAX_EPOCHS 3 / TARGET_VAL 0.95 / CONF 0.90 / DEBOUNCE 5 / صمت 2.5ث.
+- **التحقق الإنجليزي = margin-check عام فقط**: `top1 − top2 ≥ MARGIN_THRESHOLD_EN = 0.05` يُقبل الحرف وإلا حالة unknown («unclear»). جدول SIGNPAT إنجليزي **مؤجل** (تطوير لاحق قابل للتوسعة بنفس المنطق).
+- Groq: نفس دالة `correct_word` بمعامل `language="en"` — يبدّل الـ system prompt فقط (Groq يدعم الإنجليزي أصلاً). تم اختراقة حياً: `HELLO → Hello`.
+- gTTS: `synthesize_speech(text, lang="en")` — اختبار حي 7104 بايت.
+
+**الخطوات (commits):**
+- [EN-1 ✔ `0770e83`] `engine_en.py` كاملاً + `data/asl_mnist.npz` (132MB، 24 صنفاً) + `assets/dict_en/` (24 PNG) + `models/class_map_en.json` + توكن Kaggle في `~/.kaggle/access_token`. `--fetch-en` PASS shape=(34627,64,64,1) classes=24.
+- [EN-2+3 ✔ `0770e83`] `models/cnn_en.pt` — التدريب: epoch1 train 0.6662 / val 0.9480 (~420s)، epoch2 val **1.0000** → `[SELFTEST] train_en: PASS`. `--selftest-en` يشمل margin-gate. (الأرتيfacts gitignored؛ يبقى كما هو.)
+- [EN-5 ✔ `d1ac9b0`] engine.py: `correct_word(raw, language="ar")` + `synthesize_speech(text, lang="ar")` (خلفيان-متوافقان) + دمج `engine_en.en_checks` في `run_selftest` (استيراد كسول بلا circular import) → `--selftest` **ALL PASS (43 فحصاً: 32 عربي + 11 إنجليزي)**.
+- [EN-4 ✔ `71fbb2d`] app.py: **مبدّل لغة** (`st.radio` عربي|English أعلى التبويبات) — يبدّل النموذج النشط (LivePipeline↔LivePipelineEN) وخريطة الفئات واتجاه النص (RTL / LTR للإنجليزية) وgTTS ar/en وdict_en؛ **حالة منفصلة لكل لغة** (pipeline/history/last_final بمفاتيح `pipe_*`/`hist_*`/`last_*`)؛ تبويب القاموس يعرض بطاقات EN بشارات وضع الإنجليزي. تحقق AppTest: 0 استثناءات بالتبديل المزدوج عربي→English→عربي.
+- [EN-6 ⏳] فحص نهائي من المستخدم على كاميرته (تبديل حي بين اللغتين، أوضاع عربية الأربعة + حروف إنجليزية فعلية) + تشغيل `--selftest` كامل. **لا عمل كاميرا/صوت أو أولوية 5 قبل ذلك.**

@@ -9,3 +9,4 @@ pandas==3.0.5
 numpy~=2.2.0
 requests==2.34.2
 python-dotenv==1.2.2
+kagglehub==1.0.2
