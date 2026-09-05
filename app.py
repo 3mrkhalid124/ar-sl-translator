@@ -246,7 +246,11 @@ def _history_md(items, lang):
             tag = ("<span class='badge badge-ai'>AI ✨</span>" if ai
                    else "<span class='badge badge-index'>"
                         + tr("raw", "خام") + "</span>")
-            mini = f"<span class='raw-mini'>{raw}</span>" if ai else ""
+            if raw:
+                seq = " · ".join(list(raw))
+                mini = ("<span class='raw-mini'>" + tr("signed: ", "مُسجَّل: ") + seq + "</span>")
+            else:
+                mini = ""
             out.append(f"<div class='bub {'bub-ai' if ai else ''}' dir='{_DIRN}'>{mini}{text}{tag}</div>")
         else:
             out.append("<div class='bub-slot'></div>")
