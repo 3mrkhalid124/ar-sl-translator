@@ -634,12 +634,20 @@ def _load_groq_key() -> str:
     return os.environ.get("GROQ_API_KEY", "").strip()
 
 
-def correct_word(raw: str):
-    """M7: Groq llama-3.3-70b → تصحيح كلمة عربية. بلا مفتاح/إنترنت → raw بلا كسر."""
+def correct_word(raw: str, language: str = "ar"):
+    """M7: Groq → تصحيح كلمة. language='ar'/'en' يبدّل الـ prompt (نفس وظيفة التصحيح للغتين).
+    بلا مفتاح/إنترنت → raw بلا كسر. خلفي-متوافق (بدون وسيط = 'ar')."""
     key = _load_groq_key()
     if not key or not raw:
         log().info("Groq: مفتاح غير متاح — raw %r", raw)
         return {"text": raw, "source": "raw", "api": False}
+    sys_prompt = (
+        "You are an English spelling corrector. You receive a string of fingerspelled "
+        "ASL letters (may be run-together, no spaces). Correct it into a proper English "
+        "word/sentence and reply with only that."
+        if language == "en" else
+        "أنت مصحّح لغوي عربي. سيصلك نص من حروف إشارة عربية قد يكون هجاءً "
+        "متصلاً بلا تشكيل. صحّحه إلى كلمة/جملة عربية سليمة وردّ بها فقط.")
     t0 = time.time()
     try:
         r = requests.post(
@@ -648,9 +656,7 @@ def correct_word(raw: str):
             json={
                 "model": GROQ_MODEL,
                 "messages": [
-                    {"role": "system", "content": (
-                        "أنت مصحّح لغوي عربي. سيصلك نص من حروف إشارة عربية قد يكون هجاءً "
-                        "متصلاً بلا تشكيل. صحّحه إلى كلمة/جملة عربية سليمة وردّ بها فقط.")},
+                    {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": raw},
                 ],
                 "temperature": 0,
@@ -660,29 +666,29 @@ def correct_word(raw: str):
         )
         r.raise_for_status()
         text = r.json()["choices"][0]["message"]["content"].strip()
-        log().info("Groq: %r -> %r (%.1fs)", raw, text, time.time() - t0)
+        log().info("Groq[%s]: %r -> %r (%.1fs)", language, raw, text, time.time() - t0)
         return {"text": text, "source": "groq", "api": True}
     except Exception as exc:
-        log().warning("Groq فشل (%s) — raw %r", exc, raw)
+        log().warning("Groq[%s] فشل (%s) — raw %r", language, exc, raw)
         return {"text": raw, "source": "raw", "api": False}
 
 
 # ---------------------------------------------------------------- M8: صوت
 
-def synthesize_speech(text: str):
-    """M8: gTTS ar → bytes mp3 (يُشغَّل عبر st.audio). فشل → None بلا كسر."""
+def synthesize_speech(text: str, lang: str = "ar"):
+    """M8: gTTS → bytes mp3 (يُشغَّل عبر st.audio). lang='ar'/'en'. فشل → None بلا كسر."""
     if not text or not text.strip():
         return None
     try:
         from gtts import gTTS
         import io
         buf = io.BytesIO()
-        gTTS(text=text.strip(), lang="ar").write_to_fp(buf)
+        gTTS(text=text.strip(), lang=lang).write_to_fp(buf)
         buf.seek(0)
-        log().info("TTS: %d bytes لـ %r", buf.getbuffer().nbytes, text)
+        log().info("TTS[%s]: %d bytes لـ %r", lang, buf.getbuffer().nbytes, text)
         return buf.getvalue()
     except Exception as exc:
-        log().warning("gTTS فشل (%s) — نص بلا صوت", exc)
+        log().warning("gTTS[%s] فشل (%s) — نص بلا صوت", lang, exc)
         return None
 
 
@@ -813,6 +819,13 @@ def run_selftest() -> int:
         check("mediapipe.tasks_api", True)
     except Exception:
         check("mediapipe.tasks_api", False)
+
+    try:
+        import engine_en as _EN
+        _EN.en_checks(check)
+    except Exception as exc:
+        log().warning("engine_en فشل في selftest: %s", exc)
+        check("en.module", False)
 
     print(f"[SELFTEST] overall: {'ALL PASS' if ok else 'SOME FAIL'}")
     return 0 if ok else 1
