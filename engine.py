@@ -491,6 +491,213 @@ def run_camera(source=0):
         cv2.destroyAllWindows()
 
 
+# ---------------------------------------------------------------- M5/M6: سلسلة إشارات + كلمة
+
+class SignSequencer:
+    """M5+M6: التزام بالحرف عبر debounce (ثقة ≥ عتبة لعدة إطارات)، بناء كلمة، إغلاقها عند الصمت.
+    لا يُعاد الالتزام بنفس الحرف حتى انقطاع اليد أو تغيّر الحرف (يمنع تكراراً صناعياً)."""
+
+    def __init__(self, conf_threshold=CONF_THRESHOLD, debounce=DEBOUNCE_FRAMES,
+                 silence_seconds=SILENCE_SECONDS, max_word=MAX_WORD_LEN):
+        self.conf_threshold = conf_threshold
+        self.debounce = debounce
+        self.silence_seconds = silence_seconds
+        self.max_word = max_word
+        self._votes = {}
+        self._last_idx = None
+        self._last_conf = 0.0
+        self._committed_idx = None
+        self.word = []
+        self.last_hand_time = 0.0
+        self.finalized_word = None
+
+    def feed(self, hand_seen: bool, idx=None, conf=0.0, ts=0.0):
+        events = {"committed": None, "word": "".join(CLASS_SYMS[i] for i in self.word), "finalized": None}
+        if hand_seen and idx is not None:
+            self.last_hand_time = ts
+            if idx == self._last_idx and conf >= self.conf_threshold:
+                self._votes[idx] = self._votes.get(idx, 0) + 1
+                self._last_conf = conf
+            elif conf >= self.conf_threshold:
+                self._votes = {idx: 1}
+                self._last_idx = idx
+                self._last_conf = conf
+            else:
+                self._votes = {}
+                self._last_idx = idx
+            if idx != self._committed_idx and self._votes.get(idx, 0) >= self.debounce:
+                if len(self.word) >= self.max_word:
+                    self._finalize()
+                self.word.append(idx)  # نصيحة: نخزّن الرمز
+                events["committed"] = (idx, CLASS_SYMS[idx], self._last_conf)
+                self._committed_idx = idx
+                self._votes[idx] = 0
+            events["word"] = "".join(CLASS_SYMS[i] for i in self.word)
+        else:
+            self._last_idx = None
+            self._committed_idx = None
+            if self.word and (self.last_hand_time == 0.0 or ts - self.last_hand_time >= self.silence_seconds):
+                self._finalize()
+                events["finalized"] = self.finalized_word
+                events["word"] = ""
+        return events
+
+    def _finalize(self):
+        self.finalized_word = "".join(CLASS_SYMS[i] for i in self.word)
+        self.word = []
+
+
+# ---------------------------------------------------------------- M7: Groq تصحيح
+
+def _load_groq_key() -> str:
+    import os
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(ROOT / ".env")
+    except Exception:
+        pass
+    return os.environ.get("GROQ_API_KEY", "").strip()
+
+
+def correct_word(raw: str):
+    """M7: Groq llama-3.3-70b → تصحيح كلمة عربية. بلا مفتاح/إنترنت → raw بلا كسر."""
+    key = _load_groq_key()
+    if not key or not raw:
+        log().info("Groq: مفتاح غير متاح — raw %r", raw)
+        return {"text": raw, "source": "raw", "api": False}
+    t0 = time.time()
+    try:
+        r = requests.post(
+            GROQ_URL,
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json={
+                "model": GROQ_MODEL,
+                "messages": [
+                    {"role": "system", "content": (
+                        "أنت مصحّح لغوي عربي. سيصلك نص من حروف إشارة عربية قد يكون هجاءً "
+                        "متصلاً بلا تشكيل. صحّحه إلى كلمة/جملة عربية سليمة وردّ بها فقط.")},
+                    {"role": "user", "content": raw},
+                ],
+                "temperature": 0,
+                "max_tokens": 64,
+            },
+            timeout=GROQ_TIMEOUT,
+        )
+        r.raise_for_status()
+        text = r.json()["choices"][0]["message"]["content"].strip()
+        log().info("Groq: %r -> %r (%.1fs)", raw, text, time.time() - t0)
+        return {"text": text, "source": "groq", "api": True}
+    except Exception as exc:
+        log().warning("Groq فشل (%s) — raw %r", exc, raw)
+        return {"text": raw, "source": "raw", "api": False}
+
+
+# ---------------------------------------------------------------- M8: صوت
+
+def synthesize_speech(text: str):
+    """M8: gTTS ar → bytes mp3 (يُشغَّل عبر st.audio). فشل → None بلا كسر."""
+    if not text or not text.strip():
+        return None
+    try:
+        from gtts import gTTS
+        import io
+        buf = io.BytesIO()
+        gTTS(text=text.strip(), lang="ar").write_to_fp(buf)
+        buf.seek(0)
+        log().info("TTS: %d bytes لـ %r", buf.getbuffer().nbytes, text)
+        return buf.getvalue()
+    except Exception as exc:
+        log().warning("gTTS فشل (%s) — نص بلا صوت", exc)
+        return None
+
+
+# ---------------------------------------------------------------- خط أنابيب حي (مستهلك الواجهة)
+
+class LivePipeline:
+    """M4+M5+M6 (+M7 عبر correct_word) في نقاط جاهزة للواجهة. process_frame محسوب مرة/إطار."""
+
+    def __init__(self, conf_threshold=CONF_THRESHOLD, debounce=DEBOUNCE_FRAMES,
+                 silence_seconds=SILENCE_SECONDS, auto_correct=True):
+        self.seq = SignSequencer(conf_threshold, debounce, silence_seconds)
+        self.t0 = time.monotonic()
+        self.auto_correct = auto_correct
+
+    def update(self, frame):
+        ts = time.monotonic() - self.t0
+        overlay, result = process_frame(frame, int(ts * 1000))
+        events = self.seq.feed(result["hand"], result["idx"], result["conf"], ts)
+        out = {**result, "events": events, "overlay": overlay,
+               "word": events["word"], "corrected": None, "audio": None}
+        if events["finalized"]:
+            out["corrected"] = (correct_word(events["finalized"]) if self.auto_correct
+                                else {"text": events["finalized"], "source": "raw", "api": False})
+            out["audio"] = synthesize_speech(out["corrected"]["text"])
+        return out
+
+
+def run_selftest() -> int:
+    """فحص شامل بلا كاميرا/إنترنت حتمي: ملخص PASS/FAIL لكل مقطع."""
+    ok = True
+    def check(name: str, cond) -> None:
+        nonlocal ok
+        print(f"[SELFTEST] {name}: {'PASS' if cond else 'FAIL'}")
+        ok = ok and bool(cond)
+
+    check("artifacts.npz", ARASL_NPZ.exists())
+    check("artifacts.cnn", MODEL_PATH.exists())
+    check("artifacts.class_map", CLASS_MAP_PATH.exists())
+    check("artifacts.hand_model", HAND_MODEL.exists())
+    check("artifacts.dict_pngs", len(list(DICT_DIR.glob("*.png"))) == EXPECTED_CLASSES)
+
+    images, labels = load_dataset()
+    check("data.shape", images.shape == (EXPECTED_IMAGES, IMG_SIZE, IMG_SIZE, 1))
+
+    idx, conf = classify(images[0][:, :, 0])
+    check("classify.smoke", 0 <= idx < EXPECTED_CLASSES and 0.0 <= conf <= 1.0)
+
+    try:
+        import json as _j
+        cm = _j.loads(CLASS_MAP_PATH.read_text(encoding="utf-8"))
+        check("class_map.len", len(cm) == EXPECTED_CLASSES)
+    except Exception:
+        check("class_map.len", False)
+
+    fake_lm = [type("LM", (), {"x": 0.3 + (i / 21) * 0.4, "y": 0.4 + ((i % 5) / 5) * 0.2})()
+               for i in range(21)]
+    black = np.zeros((480, 640, 3), dtype=np.uint8)
+    patch, bbox = crop_hand_patch(black, fake_lm)
+    check("crop.patch", patch is not None and patch.shape == (IMG_SIZE, IMG_SIZE))
+    overlay, res = process_frame(black, 1)
+    check("frame.no_hand", res["hand"] is False)
+
+    seq = SignSequencer(conf_threshold=0.0, debounce=3, silence_seconds=1.0)
+    ev = seq.feed(True, 2, 1.0, 0.10)
+    ev = seq.feed(True, 2, 1.0, 0.20)
+    ev = seq.feed(True, 2, 1.0, 0.30)
+    check("seq.commit", ev["committed"] is not None and ev["word"] == CLASS_SYMS[2])
+    ev = seq.feed(True, 3, 1.0, 0.40)
+    ev = seq.feed(True, 3, 1.0, 0.50)
+    ev = seq.feed(True, 3, 1.0, 0.60)
+    check("seq.second_letter", ev["word"] == CLASS_SYMS[2] + CLASS_SYMS[3])
+    ev = seq.feed(False, None, 0.0, 5.00)
+    check("seq.finalize", ev["finalized"] == CLASS_SYMS[2] + CLASS_SYMS[3])
+
+    check("groq.key", bool(_load_groq_key()))  # متاح أم لا — معلومة فقط
+    check("tts.internet", synthesize_speech("اختبار") is not None)  # إنترنت؛ قابلة للفشل المسموح
+
+    try:
+        import mediapipe as mp
+        from mediapipe.tasks import python as mp_python
+        from mediapipe.tasks.python import vision as mp_vision
+        _ = mp_vision.HandLandmarkerOptions
+        check("mediapipe.tasks_api", True)
+    except Exception:
+        check("mediapipe.tasks_api", False)
+
+    print(f"[SELFTEST] overall: {'ALL PASS' if ok else 'SOME FAIL'}")
+    return 0 if ok else 1
+
+
 if __name__ == "__main__":
     for _s in (sys.stdout, sys.stderr):  # تفادي cp1252 عند طباعة العربية في PowerShell
         try:
@@ -511,5 +718,7 @@ if __name__ == "__main__":
               f"true={ENG_LABELS[int(labels[0])]} match={(idx == int(labels[0]))}")
     elif "--camera" in sys.argv:
         run_camera()
+    elif "--selftest" in sys.argv:
+        sys.exit(run_selftest())
     else:
         print("استخدام: --fetch-data | --train | --camera | --selftest")

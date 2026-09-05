@@ -51,9 +51,14 @@ ar-sl-translator/
 
 - [M1 ✔ verified] بيئة: كل الحزم تعمل تحت py3.11؛ HandLandmarker 1.0.1 يُحمَّل ويستجيب؛ hand_landmarker.task (7,819,105 bytes) يشتغل. numpy=2.2.6 (وليس 2.5.1 لأن numpy 2.5 يشترط ≥3.12).
 - [M2 ✔ verified] الداتا: `--fetch-data` نزّل 54,049 صورة (تشمل 638 صورة 256×256 و10 صور 1024×768 ← أُعيد تنسيقها لـ64×64)، 32 صنفاً، class 0=عين/2102 والأكبر، 30=ياء/1293 الأصغر (يطابق ورقة الداتا)، 32 صورة قاموس في assets/dict، تخزين `data/arasl.npz`. **ملاحظة مصدر:** روابط Mendeley المباشرة محجوبة بـCloudflare لطلبات غير-متصفح (403/turnstile) — المصدر المعتمد مرآة HF `pain/ArASL_Database_Grayscale` (نفس الداتا، CC BY 4.0). `Signs_32_New.png` المرجعية أيضاً خلف Cloudflare → تبقى اختيارية.
-- [M3 ✔ verified] التدريب: `--train` استأنف من `models/cnn.pt` (معمارية slim، contiguous، CPU_THREADS=6، BATCH_SIZE=512) → epoch1 val 0.8997 · epoch2 0.9406 · **epoch3 val 0.9518 ≥ 0.95 → استيفاء الهدف وتوقف مبكر**. `models/cnn.pt` (730KB) + `models/class_map.json` (32 صنفاً UTF-8) محفوظان؛ `[SELFTEST] train: PASS best_val_acc=0.9518`. أضعف 3 أصناف: قاف 0.816، ثاء 0.894، زاي 0.908.
-- [PENDING M4–M8] كاميرا/سلسلة/كلمة/Groq/TTS. (أكواد M4 جزئية موجودة: `detect_hand/crop_hand_patch/process_frame/run_camera` + flag `--camera`؛ الاختبار الاصطناعي للحلقة نجح — الكاميرا الفعلية خطوة باقية.)
-- [PENDING M9] تبويب القاموس.
-- [PENDING M10] التصميم البصري.
-- [NOTE] كاميرا الجهاز لم تُختبر بعد (أول تشغيل M4).
-- [NOTE] gTTS وGroq يحتاجان إنترنت؛ الفشل يمرّ بلا كسر (تسجيل + رسالة).
+- [M3 ✔ verified] التدريب: `--train` استأنف من `models/cnn.pt` (معمارية slim، contiguous، CPU_THREADS=6، BATCH_SIZE=512) → epoch1 val 0.8997 · epoch2 0.9406 · **epoch3 val 0.9518 ≥ 0.95 → استيفاء الهدف وتوقف مبكر** (القاعدة الجديدة: حد أقصى 3 epochs لكل جلسة). `models/cnn.pt` (730KB) + `models/class_map.json` (32 صنفاً UTF-8) محفوظان؛ `[SELFTEST] train: PASS best_val_acc=0.9518`. أضعف 3 أصناف: قاف 0.816، ثاء 0.894، زاي 0.908.
+- [M4 ✔ رمزياً] الكاميرا: `detect_hand` (HandLandmarker Tasks VIDEO، singleton)، `crop_hand_patch` (مربع ±هادي 1.4 + تطبيع قطبية)، `process_frame`، `run_camera` (`--camera`). الاختبار الاصطناعي للحلقة نجح؛ **كاميرا الجهاز الفعلية لم تُختبر في البيئة** (لا جهاز مرفقloadable).
+- [M5 ✔ verified] `SignSequencer`: التزام بحرف بعد DEBOUNCE_FRAMES إطارات بثقة ≥ CONF_THRESHOLD، بلا تكرار صناعي لنفس الحرف حتى انقطاع/تغيّر.
+- [M6 ✔ verified] إغلاق الكلمة عند صمت SILENCE_SECONDS بلا يد + حد MAX_WORD_LEN؛ `LivePipeline.update(frame)` يستهلك كل M4–M6 في result واحد.
+- [M7 ✔ كودياً] `correct_word`: Groq llama-3.3-70b عبر requests (مفتاح من env/.env). **مفتاح لم يُقدَّم بعد** → fallback للنص الخام بلا كسر (كما هو مقرر). يتحقق `groq.key=FAIL` في selftest وهو معلومة وليس عطلاً.
+- [M8 ✔ verified] `synthesize_speech`: gTTS ar → mp3 (اختبار حي أنتج 10752 بايت بإنترنت)؛ تشغيل عبر `st.audio` في الواجهة.
+- [M9 ✔ verified] تبويب القاموس: شبكة 8×4 بطاقات (صورة مرجعية + رمز + اسم) من `assets/dict/*.png` + `class_map.json`.
+- [M10 ✔ verified] الواجهة: `app.py` Streamlit (نسخة 1.63) بتبويبين، RTL/خط Cairo CSS مضمّن، حلقة حية `st.fragment(run_every=0.1)` مع إيقاف تشغيل آمن، تاريخ الكلمات، `st.audio` تشغيل تلقائي. فحص `AppTest`: تبويبان بلا استثناءات؛ الخادم أقلع headless بخدمة 8599.
+- [M11 ✔ committed] إغلاق: `--selftest` شامل (16 فحصاً) + تحديث هذا الملف.
+- [NOTE] كاميرا الجهاز لم تُختبر (M4); `Groq` مفتاح غير مُقدَّم بعد (M7 ينتظره للتصحيح الحي).
+- [NOTE] `models/` مستبعد من git (قابل لإعادة الإنتاج عبر `--train`); `logs/` و`data/*.parquet` أيضاً. `.env` و`.venv` مستبعدان.
