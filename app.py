@@ -123,6 +123,24 @@ h1, h2, h3 { color: #f5c518 !important; text-align: right; }
 .wave-row .bar { width: 5px; height: 24px; border-radius: 3px; background: #2ec4b6; transform-origin: bottom;
                 animation: wave 1s ease-in-out infinite; animation-play-state: paused; opacity: .85; }
 .wave-row.playing .bar { animation-play-state: running; }
+
+/* ---- البند 3: خلفية متدرجة + نفس الشكر (pattern) حسب اللغة + skeleton القاموس ---- */
+html, body, .stApp { background-color: #0d1117; }
+body.stApp, .stMain, .stApp {
+  background-image:
+    radial-gradient(1100px 750px at 88% -8%, rgba(245, 197, 24, .08), transparent 62%),
+    radial-gradient(1000px 700px at -8% 112%, rgba(29, 185, 84, .07), transparent 60%);
+  background-attachment: fixed;
+}
+.stMainBlockContainer { background: rgba(13, 17, 23, .62); border-radius: 18px; padding: 14px 20px; }
+@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+@keyframes card-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+.dict-card { animation: card-in .3s ease 1; }
+.dict-card img {
+  min-height: 92px; object-fit: contain;
+  background: linear-gradient(110deg, #1a2030 25%, #232b3d 45%, #1a2030 65%);
+  background-size: 200% 100%; animation: shimmer 1.3s infinite;
+}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -230,11 +248,39 @@ def _history_md(items, lang):
     return "<div class='bub-wrap'>" + "".join(out) + "</div>"
 
 
+# ---- بند 3: خلفية وهوية بصرية — نقش هندسي إسلامي خفيف (عربي) مقابل شبكة بسيطة (إنجليزي) ----
+def _svg_pattern(simple):
+    if simple:
+        svg = ("<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'>"
+               "<defs><pattern id='p' width='120' height='120' patternUnits='userSpaceOnUse'>"
+               "<g fill='none' stroke='rgba(255,255,255,0.05)' stroke-width='1'>"
+               "<path d='M0 60h120M60 0v120'/><circle cx='60' cy='60' r='4' fill='rgba(255,255,255,0.08)'/>"
+               "</g></pattern></defs><rect width='100%25' height='100%25' fill='url(%23p)'/></svg>")
+    else:
+        svg = ("<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'>"
+               "<defs><pattern id='p' width='120' height='120' patternUnits='userSpaceOnUse'>"
+               "<g fill='none' stroke='rgba(245,197,24,0.05)' stroke-width='1'>"
+               "<rect x='36' y='36' width='48' height='48'/>"
+               "<polygon points='60,10 70,50 110,60 70,70 60,110 50,70 10,60 50,50'/>"
+               "<circle cx='60' cy='60' r='10'/>"
+               "</g></pattern></defs><rect width='100%25' height='100%25' fill='url(%23p)'/></svg>")
+    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
+
+
 # --- مبدّل اللغة: يحوّل النموذج النشط/خريطة الفئات/الاتجاه/اللغة الصوتية/صور القاموس — بلا لمس العربي
 lang = st.radio("اللغة / Language", ["عربي", "English"], horizontal=True, key="lang_toggle")
 IS_EN = lang == "English"
 if IS_EN and engine_en is None:
     st.error("الوحدة الإنجليزية غير متاحة — شغّل: python engine_en.py --fetch-en ثم --train-en")
+
+# خلفية لغة-مخصوصة: نقش إسلامي ثماني خفيف للعربي، شبكة محايدة للإنجليزي (ألوان بصرية فقط)
+_WALL = _svg_pattern(IS_EN)
+st.markdown(
+    f"<style>html, body, .stApp {{ background-image: url('{_WALL}'), "
+    "radial-gradient(1100px 750px at 88% -8%, rgba(245,197,24,.08), transparent 62%), "
+    "radial-gradient(1000px 700px at -8% 112%, rgba(29,185,84,.07), transparent 60%); "
+    "background-attachment: fixed; background-size: auto, auto, auto; }}</style>",
+    unsafe_allow_html=True)
 
 tab_live, tab_dict = st.tabs(["\U0001F3A5 ترجمة لحظية", "\U0001F4D6 القاموس"])
 
@@ -471,7 +517,7 @@ with tab_dict:
         uri = _dict_uri(i)
         card = f"<div class='dict-card cat-{cat}' style='margin-top:14px'>"
         if uri:
-            card += f"<img src='{uri}' alt='{info['name']}'/>"
+            card += f"<img src='{uri}' alt='{info['name']}' loading='lazy'/>"
         card += f"<div style='margin-top:8px'>{_dict_badge(i, cat)}</div>"
         card += (f"<div class='dict-sym'>{info['sym']}</div>"
                  f"<div class='dict-name'>{info['name']}</div></div>")
