@@ -55,7 +55,7 @@ ar-sl-translator/
 - [M4 ✔ رمزياً] الكاميرا: `detect_hand` (HandLandmarker Tasks VIDEO، singleton)، `crop_hand_patch` (مربع ±هادي 1.4 + تطبيع قطبية)، `process_frame`، `run_camera` (`--camera`). الاختبار الاصطناعي للحلقة نجح؛ **كاميرا الجهاز الفعلية لم تُختبر في البيئة** (لا جهاز مرفقloadable).
 - [M5 ✔ verified] `SignSequencer`: التزام بحرف بعد DEBOUNCE_FRAMES إطارات بثقة ≥ CONF_THRESHOLD، بلا تكرار صناعي لنفس الحرف حتى انقطاع/تغيّر.
 - [M6 ✔ verified] إغلاق الكلمة عند صمت SILENCE_SECONDS بلا يد + حد MAX_WORD_LEN؛ `LivePipeline.update(frame)` يستهلك كل M4–M6 في result واحد.
-- [M7 ✔ كودياً] `correct_word`: Groq llama-3.3-70b عبر requests (مفتاح من env/.env). **مفتاح لم يُقدَّم بعد** → fallback للنص الخام بلا كسر (كما هو مقرر). يتحقق `groq.key=FAIL` في selftest وهو معلومة وليس عطلاً.
+- [M7 ✔ verified] `correct_word`: Groq عبر requests. **مفتاح المستخدم أُضيف `.env` (مستثنى من git).** لاحظنا 404 على `llama-3.3-70b-versatile` (أُزيل من الكتالوج 2026) → اعتُمد **`allam-2-7b`** (عربي-مختص) بعد فحص `/v1/models` (14 موديلاً متاحاً). اختبار حي: `سلم→سَلِمْتَ`، `بسمله→بسم الله`، زمن ~0.8s.
 - [M8 ✔ verified] `synthesize_speech`: gTTS ar → mp3 (اختبار حي أنتج 10752 بايت بإنترنت)؛ تشغيل عبر `st.audio` في الواجهة.
 - [M9 ✔ verified] تبويب القاموس: شبكة 8×4 بطاقات (صورة مرجعية + رمز + اسم) من `assets/dict/*.png` + `class_map.json`.
 - [M10 ✔ verified] الواجهة: `app.py` Streamlit (نسخة 1.63) بتبويبين، RTL/خط Cairo CSS مضمّن، حلقة حية `st.fragment(run_every=0.1)` مع إيقاف تشغيل آمن، تاريخ الكلمات، `st.audio` تشغيل تلقائي. فحص `AppTest`: تبويبان بلا استثناءات؛ الخادم أقلع headless بخدمة 8599.

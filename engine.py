@@ -64,7 +64,7 @@ SILENCE_SECONDS = 2.5
 MAX_WORD_LEN = 40
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MODEL = "allam-2-7b"  # عربي-مختص (بديل llama-3.3-70b-versatile الذي أزيل من الكتالوج 2026)
 GROQ_TIMEOUT = 30
 
 _log_queue = queue.Queue(-1)
