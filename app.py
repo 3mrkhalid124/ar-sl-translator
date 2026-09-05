@@ -4,6 +4,7 @@
 import sys
 import time
 import base64
+import json
 from pathlib import Path
 
 import cv2
@@ -12,6 +13,10 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import engine
+try:
+    import engine_en
+except Exception:
+    engine_en = None  # لو غابت الوحدة الإنجليزية — العربي يعمل كما كان بلا كسر
 
 st.set_page_config(page_title="مترجم لغة الإشارة العربية", page_icon="\U0001F91F", layout="wide")
 
@@ -101,23 +106,44 @@ def _img_uri(idx):
     return "data:image/png;base64," + base64.b64encode(p.read_bytes()).decode()
 
 
+# --- مبدّل اللغة: يحوّل النموذج النشط/خريطة الفئات/الاتجاه/اللغة الصوتية/صور القاموس — بلا لمس العربي
+lang = st.radio("اللغة / Language", ["عربي", "English"], horizontal=True, key="lang_toggle")
+IS_EN = lang == "English"
+if IS_EN and engine_en is None:
+    st.error("الوحدة الإنجليزية غير متاحة — شغّل: python engine_en.py --fetch-en ثم --train-en")
+
 tab_live, tab_dict = st.tabs(["\U0001F3A5 ترجمة لحظية", "\U0001F4D6 القاموس"])
 
+if IS_EN:
+    MOD = engine_en
+    _PCMODEL = engine_en.MODEL_EN_PATH
+    _PCLASS = engine_en.LivePipelineEN
+    _DIRN = "ltr"
+else:
+    MOD = engine
+    _PCMODEL = engine.MODEL_PATH
+    _PCLASS = engine.LivePipeline
+    _DIRN = "rtl"
+
 with tab_live:
-    st.title("مترجم لغة الإشارة العربية")
-    if not engine.MODEL_PATH.exists():
-        st.error("النموذج غير مدرب بعد — شغّل: python engine.py --train")
+    st.title("مترجم لغة الإشارة" if IS_EN else "مترجم لغة الإشارة العربية")
+    if not _PCMODEL.exists():
+        st.error("النموذج غير مدرب بعد — شغّل: " + ("python engine_en.py --train-en" if IS_EN
+                 else "python engine.py --train"))
         st.stop()
     if not engine.HAND_MODEL.exists():
         st.error("أصل MediaPipe مفقود: features/hand_landmarker.task")
         st.stop()
 
-    if "pipeline" not in st.session_state:
-        st.session_state.pipeline = engine.LivePipeline()
-    if "history" not in st.session_state:
-        st.session_state.history = []
-    if "last_final" not in st.session_state:
-        st.session_state.last_final = None
+    pkey = f"pipe_{lang}"
+    hkey = f"hist_{lang}"
+    lkey = f"last_{lang}"
+    if pkey not in st.session_state:
+        st.session_state[pkey] = _PCLASS()
+    if hkey not in st.session_state:
+        st.session_state[hkey] = []
+    if lkey not in st.session_state:
+        st.session_state[lkey] = None
     if "live" not in st.session_state:
         st.session_state.live = False
     if "cap" not in st.session_state:
@@ -164,91 +190,148 @@ with tab_live:
         ok, frame = cap.read()
         if not ok:
             return
-        out = st.session_state.pipeline.update(frame)
+        out = st.session_state[pkey].update(frame)
         frame_ph.image(out["overlay"], channels="BGR", width="stretch")
 
         if not out["hand"]:
-            hand_md = "<span class='badge badge-hand-wait'>لا يد — اعرض إشارتك</span>"
+            hand_md = ("<span class='badge badge-hand-wait'>No hand — show a sign</span>"
+                       if IS_EN else "<span class='badge badge-hand-wait'>لا يد — اعرض إشارتك</span>")
         elif out["idx"] is not None:
-            hand_md = "<span class='badge badge-hand-ok'>🖐 يد مكتشفة — الحرف واضح</span>"
+            hand_md = ("<span class='badge badge-hand-ok'>🖐 Hand detected — letter clear</span>"
+                       if IS_EN else "<span class='badge badge-hand-ok'>🖐 يد مكتشفة — الحرف واضح</span>")
         elif out.get("unknown"):
-            hand_md = "<span class='badge badge-hand-unknown'>🖐 غير معروف — مش واضح، رجّع وضع اليد</span>"
+            hand_md = ("<span class='badge badge-hand-unknown'>🖐 Unclear — reposition your hand</span>"
+                       if IS_EN else "<span class='badge badge-hand-unknown'>🖐 غير معروف — مش واضح، رجّع وضع اليد</span>")
         else:
-            hand_md = "<span class='badge badge-hand-wait'>يد مرئية — بانتظار الوضوح...</span>"
+            hand_md = ("<span class='badge badge-hand-wait'>Hand visible — waiting...</span>"
+                       if IS_EN else "<span class='badge badge-hand-wait'>يد مرئية — بانتظار الوضوح...</span>")
         hand_ph.markdown(f"<div style='text-align:center; margin-bottom:10px'>{hand_md}</div>",
                          unsafe_allow_html=True)
 
         if out["hand"] and out["idx"] is not None:
             pct = int(out["conf"] * 100)
-            letter_ph.markdown(
-                f"<div class='big-letter'>{engine.CLASS_NAMES[out['idx']]}</div>"
-                f"<div class='meta'>{engine.ENG_LABELS[out['idx']]} — الثقة {out['conf']:.2f}</div>"
-                f"<div class='conf-wrap'><div class='conf-fill' style='width:{pct}%'></div></div>",
-                unsafe_allow_html=True)
+            if IS_EN:
+                letter_ph.markdown(
+                    f"<div class='big-letter'>{out['label']}</div>"
+                    f"<div class='meta'>confidence {out['conf']:.2f}</div>"
+                    f"<div class='conf-wrap'><div class='conf-fill' style='width:{pct}%'></div></div>",
+                    unsafe_allow_html=True)
+            else:
+                letter_ph.markdown(
+                    f"<div class='big-letter'>{out['label']}</div>"
+                    f"<div class='meta'>{out['label_en']} — الثقة {out['conf']:.2f}</div>"
+                    f"<div class='conf-wrap'><div class='conf-fill' style='width:{pct}%'></div></div>",
+                    unsafe_allow_html=True)
         elif out.get("unknown"):
-            letter_ph.markdown("<div class='big-letter-unknown'>غير معروف</div>"
-                               "<div class='meta'>مش واضح — غيّر وضع يدك ليُحسم الحرف</div>",
-                               unsafe_allow_html=True)
+            letter_ph.markdown(
+                ("<div class='big-letter-unknown'>Unclear</div>"
+                 "<div class='meta'>Not confident — change your handshape</div>"
+                 if IS_EN else "<div class='big-letter-unknown'>غير معروف</div>"
+                 "<div class='meta'>مش واضح — غيّر وضع يدك ليُحسم الحرف</div>"),
+                unsafe_allow_html=True)
         elif out["hand"]:
-            letter_ph.markdown("<div class='meta'>يد مرئية بلا التزام بعد</div>",
-                               unsafe_allow_html=True)
+            letter_ph.markdown(
+                ("<div class='meta'>Hand visible, not committed yet</div>"
+                 if IS_EN else "<div class='meta'>يد مرئية بلا التزام بعد</div>"),
+                unsafe_allow_html=True)
         else:
-            letter_ph.markdown("<div class='meta'>بانتظار اليد...</div>",
-                               unsafe_allow_html=True)
+            letter_ph.markdown(
+                ("<div class='meta'>Waiting for a hand...</div>"
+                 if IS_EN else "<div class='meta'>بانتظار اليد...</div>"),
+                unsafe_allow_html=True)
 
         if out["word"]:
-            word_ph.markdown(f"<div class='word-line'>{out['word']}</div>",
+            word_ph.markdown(f"<div class='word-line' style='direction:{_DIRN}'>{out['word']}</div>",
                              unsafe_allow_html=True)
         else:
             word_ph.markdown("")
 
-        if out["events"]["finalized"] and out["events"]["finalized"] != st.session_state.last_final:
-            st.session_state.last_final = out["events"]["finalized"]
-            st.session_state.history.append(
+        if out["events"]["finalized"] and out["events"]["finalized"] != st.session_state[lkey]:
+            st.session_state[lkey] = out["events"]["finalized"]
+            st.session_state[hkey].append(
                 (out["events"]["finalized"], out["corrected"]["text"], out["corrected"]["source"]))
             if out["audio"]:
                 audio_ph.audio(out["audio"], format="audio/mp3", autoplay=True)
 
         history_items = []
-        for raw, text, src in st.session_state.history:
+        for raw, text, src in st.session_state[hkey]:
             if src == "groq" and raw != text:
                 history_items.append(f"<span class='raw'>{raw} ← </span>{text}"
                                      "<span class='badge badge-qamari'>Groq</span>")
             else:
-                tag = "خام" if src == "raw" else "Groq"
+                tag = "raw" if (src == "raw" and IS_EN) else ("خام" if src == "raw" else "Groq")
                 history_items.append(f"{text}<span class='badge badge-index'>{tag}</span>")
         history_ph.markdown(
-            f"<div class='word-line' style='direction:rtl'>{'&nbsp;&nbsp;'.join(history_items)}</div>"
-            if history_items else "<div class='meta'>سجلّ الكلمات فارغ — مثل: «س ← ل ← ا ← م»</div>",
+            f"<div class='word-line' style='direction:{_DIRN}'>{'&nbsp;&nbsp;'.join(history_items)}</div>"
+            if history_items else ("<div class='meta'>History empty — e.g. «H E L L O»</div>"
+                                   if IS_EN else "<div class='meta'>سجلّ الكلمات فارغ — مثل: «س ← ل ← ا ← م»</div>"),
             unsafe_allow_html=True)
 
 
     live_loop()
 
     st.divider()
-    st.markdown("**كيف تعمل:** اعرض إشارة أمام الكاميرا ≥ 5 إطارات متتالية بثقة ≥ 0.90 مع "
-                "تحقّق هندسي (ألف/سين/فاء/ثاء معتمدة عند التحقق) ليُلتزم الحرف. إن عارضت الهندسة "
-                "تصنيف CNN يُعرض «غير معروف» بدل حرف مخطئ. ثم انتظر بلا يد 2.5 ثانية لتُقفل "
-                "الكلمة وتُنطق (مع تصحيح Groq التلقائي إن توفّر).")
+    if IS_EN:
+        st.markdown("**How it works:** show a sign ≥ 5 consecutive frames with conf ≥ 0.90 and a "
+                    "top1−top2 margin ≥ 0.05 to commit the letter (unclear → shown). Then hold "
+                    "no hand for 2.5 s to lock the word and speak it (auto Groq correction if key set).")
+    else:
+        st.markdown("**كيف تعمل:** اعرض إشارة أمام الكاميرا ≥ 5 إطارات متتالية بثقة ≥ 0.90 مع "
+                    "تحقّق هندسي (ألف/سين/فاء/ثاء معتمدة عند التحقق) ليُلتزم الحرف. إن عارضت الهندسة "
+                    "تصنيف CNN يُعرض «غير معروف» بدل حرف مخطئ. ثم انتظر بلا يد 2.5 ثانية لتُقفل "
+                    "الكلمة وتُنطق (مع تصحيح Groq التلقائي إن توفّر).")
 
 with tab_dict:
-    st.title("قاموس الإشارات")
-    cmap = _load_class_map()
+    st.title("Sign Language Dictionary" if IS_EN else "قاموس الإشارات")
+    if IS_EN:
+        n = engine_en.EN_CLASSES
+        _cmap = json.loads(engine_en.CLASS_MAP_EN_PATH.read_text(encoding="utf-8"))
+
+        def _dict_info(i):
+            return _cmap.get(str(i), {"sym": engine_en.CLASS_EN_SYMS[i],
+                                      "name": engine_en.CLASS_EN_SYMS[i]})
+
+        def _dict_cat(_i):
+            return "markab"
+
+        def _dict_uri(i):
+            p = engine_en.DICT_EN_DIR / f"class_{i:02d}.png"
+            return "data:image/png;base64," + base64.b64encode(p.read_bytes()).decode() if p.exists() else None
+
+        def _dict_badge(i, cat):
+            return f"<span class='badge badge-{cat}'>EN</span><span class='badge badge-index'>#{i:02d}</span>"
+    else:
+        n = engine.EXPECTED_CLASSES
+        _cmap = None
+
+        def _dict_info(i):
+            cmap = _load_class_map()
+            return cmap.get(str(i), {"sym": engine.CLASS_SYMS[i], "name": engine.CLASS_NAMES[i]})
+
+        def _dict_cat(i):
+            return _cat(i)
+
+        def _dict_uri(i):
+            return _img_uri(i)
+
+        def _dict_badge(i, cat):
+            return (f"<span class='badge badge-{cat}'>{CAT_LABEL[cat]}</span>"
+                    f"<span class='badge badge-index'>#{i:02d}</span>")
+
     cols = st.columns(4)
-    for i in range(engine.EXPECTED_CLASSES):
-        info = cmap.get(str(i), {"sym": engine.CLASS_SYMS[i], "name": engine.CLASS_NAMES[i]})
-        cat = _cat(i)
-        uri = _img_uri(i)
+    for i in range(n):
+        info = _dict_info(i)
+        cat = _dict_cat(i)
+        uri = _dict_uri(i)
         card = f"<div class='dict-card cat-{cat}' style='margin-top:14px'>"
         if uri:
             card += f"<img src='{uri}' alt='{info['name']}'/>"
-        card += (f"<div style='margin-top:8px'>"
-                 f"<span class='badge badge-{cat}'>{CAT_LABEL[cat]}</span>"
-                 f"<span class='badge badge-index'>#{i:02d}</span></div>")
+        card += f"<div style='margin-top:8px'>{_dict_badge(i, cat)}</div>"
         card += (f"<div class='dict-sym'>{info['sym']}</div>"
                  f"<div class='dict-name'>{info['name']}</div></div>")
         with cols[i % 4]:
             st.markdown(card, unsafe_allow_html=True)
 
-st.markdown("<div class='meta' style='margin-top:24px'>M3–M11 + P1 (تحقّق هندسي) مكتملة — واجهة محلية "
-            "Streamlit · نموذج val 95.18% · 32 إشارة ArASL</div>", unsafe_allow_html=True)
+st.markdown("<div class='meta' style='margin-top:24px'>العربي: val 95.18% · 32 إشارة ArASL · "
+            "English: val 100% · 24 ASL signs — واجهة محلية Streamlit (M3–M11 + P1 + EN)</div>",
+            unsafe_allow_html=True)
