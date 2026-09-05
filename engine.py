@@ -525,13 +525,31 @@ def finger_features(landmarks):
     return {"fingers": fingers, "thumb": thumb, "num_ext": sum(fingers)}
 
 
-def validate_geometry(landmarks, cls_idx: int):
+def synthetic_landmarks(fingers=(0, 0, 0, 0), thumb=False, cx=0.5):
+    """21 نقطة (x,y) بمسافات صريحة تصدق قاعدة عدّ الأصابع (المعصم أسفل الوسط).
+    فِهرسة تتبع _FINGER_LINKS تماماً — تُستعمل في فحوص selftest العربية والإنجليزية."""
+    pts = {0: (cx, 0.85)}
+    for k, ext in enumerate(fingers):
+        b = 0.62 - 0.05 * k          # قاعدة الإصبع
+        m = 5 + 4 * k                # فهرس MCP
+        for i, y in ((m, b + 0.06), (m + 1, b), (m + 3, b - 0.30 if ext else b + 0.04)):
+            pts[i] = (cx, y)
+    pts[2] = (cx, 0.61)
+    pts[3] = (cx, 0.55)
+    pts[4] = (cx + 0.22, 0.45) if thumb else (cx, 0.59)
+    return [type("LM", (), {"x": x, "y": y})() for i in range(21)
+            for x, y in [pts.get(i, (cx - i * 0.005, 0.6 - i * 0.005))]]
+
+
+def validate_geometry(landmarks, cls_idx: int, patterns=SIGNPAT):
     """طبقة التحقق الهندسي (Priority 1): إن كان للنمط المعلوم للصنف قيد، نعبّر رفضاً عن تعارضٍ
     واضح بين الهندسة وتصنيف CNN (فرق عدد الأصابع ≥ 2 أو تعارض إبهام حاسم) → 'غير معروف'.
-    بلا نقاط (يد فارغة) → قَبول صامت (لا معلومات تُرفض)."""
-    if not landmarks or cls_idx not in SIGNPAT:
+    بلا نقاط (يد فارغة) → قَبول صامت (لا معلومات تُرفض).
+    patterns: جدول {cls_idx: {fingers, thumb}} — يأخذ الجدول العربي افتراضياً،
+    والجدول الإنجليزي (SIGNPAT_EN) يُمرَّر من engine_en."""
+    if not landmarks or cls_idx not in patterns:
         return True
-    rule = SIGNPAT[cls_idx]
+    rule = patterns[cls_idx]
     if not rule:
         return True
     f = finger_features(landmarks)
@@ -871,24 +889,10 @@ def run_selftest() -> int:
     check("seq.finalize", ev["finalized"] == CLASS_SYMS[2] + CLASS_SYMS[3])
 
     # ---- Priority 1: طبقة التحقق الهندسي (الأوضاع الأربعة المؤكدة) ----
-    def _mk_lm(fingers=(0, 0, 0, 0), thumb=False):
-        """21 نقطة (x,y) بمسافات صريحة تصدق قاعدة عدّ الأصابع؛ المعصم (0.5, 0.85)."""
-        pts = {0: (0.50, 0.85)}
-        for k, ext in enumerate(fingers):
-            b = 0.62 - 0.05 * k          # قاعدة الإصبع
-            m = 5 + 4 * k                # فهرس MCP
-            for i, y in ((m, b + 0.06), (m + 1, b), (m + 3, b - 0.30 if ext else b + 0.04)):
-                pts[i] = (0.50, y)
-        pts[2] = (0.50, 0.61)
-        pts[3] = (0.50, 0.55)
-        pts[4] = (0.72, 0.45) if thumb else (0.50, 0.59)
-        return [type("LM", (), {"x": x, "y": y})() for i in range(21)
-                for x, y in [pts.get(i, (0.5 - i * 0.005, 0.6 - i * 0.005))]]
-
-    iu = _mk_lm((1, 0, 0, 0), thumb=False)   # سبابة لأعلى → ياء (30)
-    op = _mk_lm((1, 1, 1, 1), thumb=True)    # كف مفتوح → سين (21)
-    ft = _mk_lm((0, 0, 0, 0), thumb=True)    # قبضة + إبهام جانبي → فاء (7)
-    w3 = _mk_lm((1, 1, 1, 0), thumb=False)   # W ثلاث أصابع → ثاء (25)
+    iu = synthetic_landmarks((1, 0, 0, 0), thumb=False)  # سبابة لأعلى → ياء (30)
+    op = synthetic_landmarks((1, 1, 1, 1), thumb=True)  # كف مفتوح → سين (21)
+    ft = synthetic_landmarks((0, 0, 0, 0), thumb=True)  # قبضة + إبهام جانبي → فاء (7)
+    w3 = synthetic_landmarks((1, 1, 1, 0), thumb=False)  # W ثلاث أصابع → ثاء (25)
     fi_iu, fi_op, fi_ft, fi_w3 = (finger_features(x) for x in (iu, op, ft, w3))
     check("geo.features.counts",
           (fi_iu["num_ext"] == 1 and fi_iu["thumb"] is False and

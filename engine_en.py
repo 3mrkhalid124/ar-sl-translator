@@ -52,6 +52,34 @@ DEBOUNCE_FRAMES_EN = 5
 SILENCE_SECONDS_EN = 2.5
 MARGIN_THRESHOLD_EN = 0.05  # margin-check عام: فرق احتمال top1−top2 المقبول
 
+# تحقق هندسي إنجليزي (SIGNPAT_EN، التجميعات فقط — لا حسابات حرف-حرف):
+#   قياس على asl_mnist.npz نفسها أثبت أن رسومات MNIST منحازة منهجياً (B≈2 عمود لا 4،
+#   A≈3 لا 0، W≈4 لا 3) فأعمدة الأصابع لا تصلح أساساً صارماً لوحدها؛ الملمس الموثوق الوحيد
+#   منها الفصل «أصابع مرفوعة (topY≈0–3)» عن «قبضة/مطوية (topY≈6–9)». لذلك نضبط بوابات
+#   عدد الأصابع فقط (فئة الأجزاء الأربعة) من القيم الكنسية الكنسية لـ ASL، بتسامح ±1
+#   (نفس قاعدة العربية)، والإبهام "any" (إبهامه غير موثوق القياس في الرسومات). تم التعميد
+#   على حروف يدويّة غامضة (C, G, O, P, Q, X) → لا قيد (margin-check وحده). التحقق
+#   الصارم حرف-بحرف يُؤجَّل إلى اختبار الكاميرا (EN-6).
+SIGNPAT_EN = {
+    0: {"fingers": 0, "thumb": "any"},    # A — قبضة + إبهام مطوي
+    1: {"fingers": 4, "thumb": "any"},    # B — أربعة أصابع ممدودة، الإبهام مطوي
+    3: {"fingers": 1, "thumb": "any"},    # D — سبابة فقط
+    4: {"fingers": 0, "thumb": "any"},    # E — قبضة (جميعها مطوية)
+    5: {"fingers": 3, "thumb": "any"},    # F — وسطى+بنصر+خنصر ممدودة (سبابة تلامس الإبهام)
+    8: {"fingers": 1, "thumb": "any"},    # I — خنصر فقط
+    9: {"fingers": 2, "thumb": "any"},    # K — سبابة+وسطى ممدودتان
+    10: {"fingers": 1, "thumb": "any"},   # L — سبابة فقط + إبهام
+    11: {"fingers": 0, "thumb": "any"},   # M — ثلاث مطوية تحت الإبهام
+    12: {"fingers": 0, "thumb": "any"},   # N — إصبعان مطويان
+    16: {"fingers": 2, "thumb": "any"},   # R — سبابة+وسطى متقاطعتان
+    17: {"fingers": 0, "thumb": "any"},   # S — قبضة كاملة
+    18: {"fingers": 0, "thumb": "any"},   # T — قبضة + إبهام بين سبابة ووسطى
+    19: {"fingers": 2, "thumb": "any"},   # U — سبابة+وسطى
+    20: {"fingers": 2, "thumb": "any"},   # V — سبابة+وسطى متباعدتان
+    21: {"fingers": 3, "thumb": "any"},   # W — سبابة+وسطى+بنصر
+    23: {"fingers": 1, "thumb": "any"},   # Y — خنصر + إبهام
+}
+
 KAGGLE_DATASET = "datamunge/sign-language-mnist"
 KAGGLE_TRAIN_REL = "sign_mnist_train/sign_mnist_train.csv"
 KAGGLE_TEST_REL = "sign_mnist_test/sign_mnist_test.csv"
@@ -295,7 +323,7 @@ def process_frame_en(frame, ts_ms: int, prof=None):
             idx, conf, margin = classify_en_softmax(patch)
             ar._profile_time(prof, "classify", _t0)
             _t0 = time.perf_counter()
-            if not margin_accept(margin):
+            if not margin_accept(margin) or not ar.validate_geometry(landmarks, idx, patterns=SIGNPAT_EN):
                 idx, conf = None, 0.0
                 result["unknown"] = True
             ar._profile_time(prof, "geometry", _t0)
@@ -427,6 +455,29 @@ def en_checks(check) -> None:
     check("en.artifacts.model", MODEL_EN_PATH.exists())
     check("en.artifacts.class_map", CLASS_MAP_EN_PATH.exists())
     check("en.artifacts.dict_en", len(list(DICT_EN_DIR.glob("*.png"))) == EN_CLASSES)
+
+    # ---- SIGNPAT_EN (تجميعات كنسية قياساً على البيانات — تعليق في TABLE) ----
+    check("en.signpat.values",
+          SIGNPAT_EN[1]["fingers"] == 4 and SIGNPAT_EN[0]["fingers"] == 0
+          and SIGNPAT_EN[21]["fingers"] == 3 and SIGNPAT_EN[19]["fingers"] == 2
+          and all(r["thumb"] == "any" for r in SIGNPAT_EN.values()))
+    unanchored = {2, 6, 7, 13, 14, 15, 22}  # C, G, H, O, P, Q, X
+    check("en.signpat.no_ambig", not (unanchored & set(SIGNPAT_EN))
+          and set(SIGNPAT_EN) <= set(range(EN_CLASSES)))
+    _fist = ar.synthetic_landmarks((0, 0, 0, 0), thumb=False)
+    _one = ar.synthetic_landmarks((1, 0, 0, 0), thumb=True)
+    _two = ar.synthetic_landmarks((1, 1, 0, 0), thumb=False)
+    _three = ar.synthetic_landmarks((1, 1, 1, 0), thumb=False)
+    _open = ar.synthetic_landmarks((1, 1, 1, 1), thumb=True)
+    check("en.signpat.apply.open_B", ar.validate_geometry(_open, 1, SIGNPAT_EN) is True)
+    check("en.signpat.apply.fist_on_B.reject", ar.validate_geometry(_fist, 1, SIGNPAT_EN) is False)
+    check("en.signpat.apply.fist_on_S", ar.validate_geometry(_fist, 17, SIGNPAT_EN) is True)
+    check("en.signpat.apply.two_on_V", ar.validate_geometry(_two, 20, SIGNPAT_EN) is True)
+    check("en.signpat.apply.open_on_V.reject", ar.validate_geometry(_open, 20, SIGNPAT_EN) is False)
+    check("en.signpat.apply.one_on_D", ar.validate_geometry(_one, 3, SIGNPAT_EN) is True)
+    check("en.signpat.apply.unanchored.pass",
+          ar.validate_geometry(_open, 2, SIGNPAT_EN) is True
+          and ar.validate_geometry(_fist, 7, SIGNPAT_EN) is True)
 
     try:
         images, labels = load_en_dataset()
