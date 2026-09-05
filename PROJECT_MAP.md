@@ -50,9 +50,9 @@ ar-sl-translator/
 ## [ORPHANS & PENDING]
 
 - [M1 ✔ verified] بيئة: كل الحزم تعمل تحت py3.11؛ HandLandmarker 1.0.1 يُحمَّل ويستجيب؛ hand_landmarker.task (7,819,105 bytes) يشتغل. numpy=2.2.6 (وليس 2.5.1 لأن numpy 2.5 يشترط ≥3.12).
-- [PENDING M2] تنزيل ArASL2018 من Mendeley + تحقق sha256 + فك ضغط + تحقق 54,049/32 class/64×64 + استخراج صور القاموس. (المسار المعتمد للتنزيل المباشر: `https://data.mendeley.com/public-files/datasets/y7pckrw6z2/files/<file_id>/file_downloaded`).
-- [PENDING M3] تدريب CNN (target val ≥ 95%).
-- [PENDING M4–M8] كاميرا/سلسلة/كلمة/Groq/TTS.
+- [M2 ✔ verified] الداتا: `--fetch-data` نزّل 54,049 صورة (تشمل 638 صورة 256×256 و10 صور 1024×768 ← أُعيد تنسيقها لـ64×64)، 32 صنفاً، class 0=عين/2102 والأكبر، 30=ياء/1293 الأصغر (يطابق ورقة الداتا)، 32 صورة قاموس في assets/dict، تخزين `data/arasl.npz`. **ملاحظة مصدر:** روابط Mendeley المباشرة محجوبة بـCloudflare لطلبات غير-متصفح (403/turnstile) — المصدر المعتمد مرآة HF `pain/ArASL_Database_Grayscale` (نفس الداتا، CC BY 4.0). `Signs_32_New.png` المرجعية أيضاً خلف Cloudflare → تبقى اختيارية.
+- [M3 ✔ verified] التدريب: `--train` استأنف من `models/cnn.pt` (معمارية slim، contiguous، CPU_THREADS=6، BATCH_SIZE=512) → epoch1 val 0.8997 · epoch2 0.9406 · **epoch3 val 0.9518 ≥ 0.95 → استيفاء الهدف وتوقف مبكر**. `models/cnn.pt` (730KB) + `models/class_map.json` (32 صنفاً UTF-8) محفوظان؛ `[SELFTEST] train: PASS best_val_acc=0.9518`. أضعف 3 أصناف: قاف 0.816، ثاء 0.894، زاي 0.908.
+- [PENDING M4–M8] كاميرا/سلسلة/كلمة/Groq/TTS. (أكواد M4 جزئية موجودة: `detect_hand/crop_hand_patch/process_frame/run_camera` + flag `--camera`؛ الاختبار الاصطناعي للحلقة نجح — الكاميرا الفعلية خطوة باقية.)
 - [PENDING M9] تبويب القاموس.
 - [PENDING M10] التصميم البصري.
 - [NOTE] كاميرا الجهاز لم تُختبر بعد (أول تشغيل M4).
