@@ -51,10 +51,10 @@ h1, h2, h3 { color: #f5c518 !important; text-align: right; }
 .dict-card img { border-radius: 10px; width: 100%; border: 2px solid #2a3040; }
 .dict-name { font-weight: 700; color: #f5c518; margin-top: 6px; font-size: 18px; }
 .dict-sym { color: #9aa4b5; font-size: 15px; }
-.cat-shamsi { border-color: #9c7c1e; }
-.cat-shamsi:hover { border-color: #ffd34d; box-shadow: 0 8px 20px rgba(245, 197, 24, .18); }
-.cat-qamari { border-color: #14683a; }
-.cat-qamari:hover { border-color: #1db954; box-shadow: 0 8px 20px rgba(29, 185, 84, .18); }
+.cat-extended { border-color: #1d6f8f; }
+.cat-extended:hover { border-color: #38bdf8; box-shadow: 0 8px 20px rgba(56, 189, 248, .18); }
+.cat-fist { border-color: #9c4a1e; }
+.cat-fist:hover { border-color: #ff9f43; box-shadow: 0 8px 20px rgba(255, 159, 67, .18); }
 .cat-markab { border-color: #5b3fa8; }
 .cat-markab:hover { border-color: #a78bfa; box-shadow: 0 8px 20px rgba(167, 139, 250, .18); }
 
@@ -62,8 +62,10 @@ h1, h2, h3 { color: #f5c518 !important; text-align: right; }
   display: inline-block; font-size: 11px; font-weight: 700; border-radius: 999px;
   padding: 2px 10px; margin: 2px; color: #0e1117; letter-spacing: .3px;
 }
-.badge-shamsi { background: linear-gradient(135deg, #ffd34d, #ff9f43); }
-.badge-qamari { background: linear-gradient(135deg, #2ec4b6, #1db954); }
+.badge-extended { background: linear-gradient(135deg, #38bdf8, #22d3ee); }
+.badge-fist { background: linear-gradient(135deg, #f5c518, #ff9f43); }
+.badge-thumb { background: linear-gradient(135deg, #a78bfa, #7c3aed); color: #ffffff; }
+.badge-ai { background: linear-gradient(135deg, #2ec4b6, #1db954); }
 .badge-markab { background: linear-gradient(135deg, #a78bfa, #7c3aed); color: #ffffff; }
 .badge-index { background: #2a3040; color: #9aa4b5; }
 .badge-hand-ok { background: linear-gradient(135deg, #1db954, #2ec4b6); font-size: 14px; }
@@ -156,18 +158,20 @@ def _load_class_map():
                 for i in range(engine.EXPECTED_CLASSES)}
 
 
-# فئات حروف عربية موضوعية (شمسية/قمرية) + مركّبات — تلوين البطاقات بلا افتراضات في شكل اليد
-SHAMSI_LETTERS = {24, 25, 4, 26, 19, 31, 21, 22, 20, 6, 23, 5, 16, 18}
-QAMARI_LETTERS = {2, 3, 12, 11, 14, 0, 9, 7, 8, 13, 17, 10, 28, 30}
-CAT_LABEL = {"shamsi": "شمسية", "qamari": "قمرية", "markab": "خاصة/مركبة"}
+# تصنيف بصري لشكل اليد الفعلي في كل صورة قاموس عربي — مصدره: تعبئة المستخدم المرئية في dict_classes.tsv.
+# (أُلغيت شمسية/قمرية نهائياً). الفئات: أصابع مفرودة / قبضة مغلقة / إبهام بارز.
+_VIS_LABEL = {"extended": "أصابع مفرودة", "fist": "قبضة مغلقة", "thumb": "إبهام بارز"}
+_VIS_LABEL_EN = {"extended": "Fingers extended", "fist": "Closed fist", "thumb": "Thumb prominent"}
+DICT_CLASSES = {0: "extended", 1: "extended", 2: "thumb", 3: "extended", 4: "extended", 5: "extended",
+                6: "thumb", 7: "fist", 8: "extended", 9: "extended", 10: "fist", 11: "extended",
+                12: "extended", 13: "extended", 14: "extended", 15: "extended", 16: "extended",
+                17: "extended", 18: "extended", 19: "extended", 20: "fist", 21: "extended",
+                22: "extended", 23: "extended", 24: "extended", 25: "extended", 26: "extended",
+                27: "extended", 28: "thumb", 29: "thumb", 30: "extended", 31: "extended"}
 
 
 def _cat(idx):
-    if idx in SHAMSI_LETTERS:
-        return "shamsi"
-    if idx in QAMARI_LETTERS:
-        return "qamari"
-    return "markab"
+    return DICT_CLASSES.get(idx, "extended")
 
 
 def _img_uri(idx):
@@ -219,7 +223,7 @@ def _reveal_md(rev, lang):
     """أنيميشن كشف فاعلية AI: التسلسل الخام يخفت ← المصحح يدخل أكبر/بلون مميز."""
     raw, text, src = rev
     ai = src == "groq" and raw != text
-    badge = ("<span class='badge badge-qamari'>AI ✨</span>" if ai
+    badge = ("<span class='badge badge-ai'>AI ✨</span>" if ai
              else "<span class='badge badge-index'>" + tr("raw", "خام") + "</span>")
     raw_tiles = "".join(f"<span class='tile'>{c}</span>" for c in raw)
     return ("<div class='reveal-stage done' dir='" + _DIRN + "'>"
@@ -239,7 +243,7 @@ def _history_md(items, lang):
         if 0 <= idx < len(items):
             raw, text, src = items[idx]
             ai = src == "groq" and raw != text
-            tag = ("<span class='badge badge-qamari'>AI ✨</span>" if ai
+            tag = ("<span class='badge badge-ai'>AI ✨</span>" if ai
                    else "<span class='badge badge-index'>"
                         + tr("raw", "خام") + "</span>")
             mini = f"<span class='raw-mini'>{raw}</span>" if ai else ""
@@ -490,6 +494,8 @@ with tab_live:
 
 with tab_dict:
     st.title("Sign Language Dictionary" if IS_EN else "قاموس الإشارات")
+    st.caption(tr("Visual handshape category (educational reference — not a live detection result)",
+                  "تصنيف بصري لشكل اليد (مرجع تعليمي — ليس نتيجة كشف حي)"), unsafe_allow_html=True)
     if IS_EN:
         n = engine_en.EN_CLASSES
         try:
@@ -524,7 +530,7 @@ with tab_dict:
             return _img_uri(i)
 
         def _dict_badge(i, cat):
-            return (f"<span class='badge badge-{cat}'>{CAT_LABEL[cat]}</span>"
+            return (f"<span class='badge badge-{cat}'>{tr(_VIS_LABEL_EN[cat], _VIS_LABEL[cat])}</span>"
                     f"<span class='badge badge-index'>#{i:02d}</span>")
 
     cols = st.columns(4)

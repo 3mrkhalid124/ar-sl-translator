@@ -1,0 +1,38 @@
+# املأ التصنيف البصري لكل بلاطة قاموس عربي حسب الصورة الفعلية (أرقام class_00..class_31):
+# القيم المسموحة: extended = أصابع مفرودة | fist = قبضة مغلقة | thumb = إبهام بارز
+# مثال: افتح قاموس التطبيق (تبويب القاموس بالعربي) وانظر البطاقات، أو انظر dict_grid.png.
+# أعد حفظ الملف بعد التعبئة وسأقرؤه وأربطه مباشرة. إن لم تعرف بطاقة اكتب unknown.
+index	class_label
+class_id	category
+00	extended
+01	extended
+02	thumb
+03	extended
+04	extended
+05	extended
+06	thumb
+07	fist
+08	extended
+09	extended
+10	fist
+11	extended
+12	extended
+13	extended
+14	extended
+15	extended
+16	extended
+17	extended
+18	extended
+19	extended
+20	fist
+21	extended
+22	extended
+23	extended
+24	extended
+25	extended
+26	extended
+27	extended
+28	thumb
+29	thumb
+30	extended
+31	extended
