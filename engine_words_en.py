@@ -310,74 +310,101 @@ def eval_main():
     report(model, Xte, yte, classes, "test")
 
 
-def live_main():
-    """Live webcam mode: two-hand landmarks -> 40-frame buffer -> prediction."""
-    import cv2
-    import mediapipe as mp
-    from mediapipe.tasks import python as mp_python
-    from mediapipe.tasks.python import vision as mp_vision
-    from engine import HAND_MODEL
+class WordsLive:
+    """Stateful live ISLR pipeline for the English-Words subsystem (Streamlit + CLI).
+    Two-hand landmarks -> 126-dim wrist-relative+scaled frame -> rolling 40-frame
+    window -> LSTM prediction. One instance per tab session."""
 
-    import keras
-    if not CKPT.exists():
-        raise SystemExit("no checkpoint — run --train first")
-    classes = json.loads(CLASSES_PATH.read_text(encoding="utf-8"))
-    sc = json.loads(SCALER_PATH.read_text(encoding="utf-8"))
-    model = keras.models.load_model(str(CKPT))
+    def __init__(self):
+        import keras
+        if not CKPT.exists():
+            raise SystemExit("no checkpoint — run --train first")
+        self.classes = json.loads(CLASSES_PATH.read_text(encoding="utf-8"))
+        self.sc = json.loads(SCALER_PATH.read_text(encoding="utf-8"))
+        self.model = keras.models.load_model(str(CKPT))
+        from engine import HAND_MODEL
+        from mediapipe.tasks import python as mp_python
+        from mediapipe.tasks.python import vision as mp_vision
+        opts = mp_vision.HandLandmarkerOptions(
+            base_options=mp_python.BaseOptions(model_asset_path=str(HAND_MODEL)),
+            running_mode=mp_vision.RunningMode.VIDEO,
+            num_hands=2,
+            min_hand_detection_confidence=0.5,
+            min_hand_presence_confidence=0.5,
+            min_tracking_confidence=0.5,
+        )
+        self.det = mp_vision.HandLandmarker.create_from_options(opts)
+        self.buf = np.zeros((MAX_T, L_HAND), np.float32)
+        self.fill = 0
+        self.t_hand = None
+        self._ts = 0
 
-    opts = mp_vision.HandLandmarkerOptions(
-        base_options=mp_python.BaseOptions(model_asset_path=str(HAND_MODEL)),
-        running_mode=mp_vision.RunningMode.VIDEO,
-        num_hands=2,
-        min_hand_detection_confidence=0.5,
-        min_hand_presence_confidence=0.5,
-        min_tracking_confidence=0.5,
-    )
-    det = mp_vision.HandLandmarker.create_from_options(opts)
-    cap = cv2.VideoCapture(0)
-    buf = np.zeros((MAX_T, 126), np.float32)
-    fill = 0
-    ts = 0
-    print("[words_en] live — q to quit", flush=True)
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            break
-        ts += 33
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        res = det.detect_for_video(mp_image, ts)
-        vec = np.zeros(126, np.float32)
+    def _frame_vec(self, res):
+        vec = np.zeros(L_HAND, np.float32)
         if res and res.hand_landmarks:
             pairs = sorted(zip(res.hand_landmarks, [h.category_name for h in (res.handednesses or [])]),
                            key=lambda t: 0 if t[1] == "Left" else 1)
-            hands = {0: None, 1: None}
             for lm, cat in pairs[:2]:
                 slot = LEFT if cat == "Left" else RIGHT
-                hands[slot] = np.array([[p.x, p.y, p.z] for p in lm], np.float32).reshape(-1)
-            if hands[LEFT] is not None:
-                vec[:63] = hands[LEFT]
-            if hands[RIGHT] is not None:
-                vec[63:] = hands[RIGHT]
+                vec[slot * 63:slot * 63 + 63] = \
+                    np.array([[p.x, p.y, p.z] for p in lm], np.float32).reshape(-1)
         vec = wrist_relative(vec.reshape(1, L_HAND))[0]
-        vec = apply_scaler(vec, sc).astype(np.float32)
-        if fill < MAX_T:
-            buf[fill] = vec
-            fill += 1
-        else:
-            buf[:-1] = buf[1:]
-            buf[-1] = vec
-        if fill == MAX_T:
-            xb = buf[None, ...]
-            probs = model.predict(xb, verbose=0)[0]
+        return apply_scaler(vec, self.sc).astype(np.float32)
+
+    def update(self, frame_bgr):
+        """frame_bgr -> dict(overlay, word, conf, hand, ready, error). Cheap per frame."""
+        import cv2
+        import mediapipe as mp
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB,
+                            data=cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
+        try:
+            res = self.det.detect_for_video(mp_image, self._ts)
+        except Exception:
+            res = None
+        had = bool(res and res.hand_landmarks)
+        vec = self._frame_vec(res) if had else np.zeros(L_HAND, np.float32)
+        now = time.time()
+        if had:
+            if self.fill < MAX_T:
+                self.buf[self.fill] = vec
+                self.fill += 1
+            else:
+                self.buf[:-1] = self.buf[1:]
+                self.buf[-1] = vec
+            self.t_hand = now
+        elif self.t_hand and now - self.t_hand > 1.0 and self.fill > 0:
+            self.fill = 0  # gap long enough -> start a new word
+
+        word, conf = None, 0.0
+        if self.fill == MAX_T:
+            probs = self.model.predict(self.buf[None, ...], verbose=0)[0]
             top = int(np.argmax(probs))
-            pr = np.max(probs)
-            cv2.putText(frame, f"{classes[top]} {pr:.2f}", (20, 60),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 200, 0), 3)
-        cv2.imshow("English Words", frame)
-        if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
-            break
-    cap.release()
-    cv2.destroyAllWindows()
+            conf = float(np.max(probs))
+            word = self.classes[top]
+            cv2.putText(frame_bgr, f"{word} {conf:.2f}", (20, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 200, 0), 3)
+        return {"overlay": frame_bgr, "word": word, "conf": conf,
+                "hand": had, "ready": self.fill == MAX_T, "error": None}
+
+
+def live_main():
+    """CLI live webcam mode (same pipeline as the Streamlit tab)."""
+    import cv2
+    pl = WordsLive()
+    cap = cv2.VideoCapture(0)
+    print("[words_en] live — q to quit", flush=True)
+    try:
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            out = pl.update(frame)
+            cv2.imshow("English Words", out["overlay"])
+            if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
+                break
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
 
 
 def main():

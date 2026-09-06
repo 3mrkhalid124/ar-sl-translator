@@ -264,11 +264,11 @@ _DIRCSS = (":root, .stApp { direction: rtl; } h1, h2, h3 { text-align: right; }"
            ":root, .stApp { direction: ltr; } h1, h2, h3 { text-align: left; }")
 st.markdown(f"<style>{_DIRCSS}</style>", unsafe_allow_html=True)
 
-tab_live, tab_dict, tab_words = (st.tabs(["\U0001F3A5 Live Translation", "\U0001F4D6 Dictionary",
-                                           "\U0001F4AC Common Words"])
-                                 if IS_EN else
-                                 st.tabs(["\U0001F3A5 ترجمة لحظية", "\U0001F4D6 القاموس",
-                                          "\U0001F4AD كلمات شائعة"]))
+tab_live, tab_dict, tab_words, tab_wlive = (st.tabs(["\U0001F3A5 Live Translation", "\U0001F4D6 Dictionary",
+                                                     "\U0001F4AC Common Words", "\U0001F44B English Words"])
+                                            if IS_EN else
+                                            st.tabs(["\U0001F3A5 ترجمة لحظية", "\U0001F4D6 القاموس",
+                                                     "\U0001F4AD كلمات شائعة", "\U0001F44B كلمات إنجليزية"]))
 
 if IS_EN:
     _PCMODEL = engine_en.MODEL_EN_PATH
@@ -609,9 +609,118 @@ with tab_words:
         with wcols[i % 4]:
             st.markdown(card, unsafe_allow_html=True)
 
+
+# ---- بند 4: «كلمات إنجليزية» — نظام رابع منفصل (engine_words_en.py) — تحميل كسول، لا يمس الثلاثة العليا ----
+@st.cache_resource
+def _words_live_pipe():
+    import engine_words_en as ew
+    return ew.WordsLive(), ew
+
+
+with tab_wlive:
+    st.title(tr("English Words — Live", "كلمات إنجليزية — حيّ"))
+    if IS_EN:
+        st.caption("LSTM over 40 landmark frames · 10 words (hello, thankyou, please, yes, no, bye, "
+                   "drink, water, happy, sleep) · held-out signers test = 63.6%")
+    else:
+        st.caption("LSTM على 40 إطاراً من اليدين · 10 كلمات (hello, thankyou, please, yes, no, bye, "
+                   "drink, water, happy, sleep) · اختبار على مشاركين جدد = 63.6%")
+
+    wlive = "wlive_on"
+    wcap = "wcap_on"
+    if wlive not in st.session_state:
+        st.session_state[wlive] = False
+        st.session_state[wcap] = None
+
+    _wt = st.session_state.get("words_en_ckpt")
+    _st = st.caption(tr("Model: " + ("trained ✓" if _wt else "not trained yet"),
+                        "النموذج: " + ("مُدرَّب ✓" if _wt else "ليس مُدرَّباً بعد")))
+    try:
+        from pathlib import Path
+        _ck = next(Path("models").glob("words_en.keras"), None)
+        if not _ck and not _wt:
+            st.error(tr("No checkpoint — run: python engine_words_en.py --train",
+                        "لا يوجد نموذج — شغّل: python engine_words_en.py --train"))
+    except Exception:
+        pass
+
+    wcol_ctrl = st.columns([1, 3])[0]
+    with wcol_ctrl:
+        if st.button(tr("Start words camera", "بدء كاميرا الكلمات"), type="primary", width="stretch"):
+            if st.session_state[wcap] is None or not st.session_state[wcap].isOpened():
+                _cap = cv2.VideoCapture(0)
+                if not _cap.isOpened():
+                    st.error(tr("Could not open camera (source=0)", "تعذر فتح الكاميرا (source=0)"))
+                else:
+                    st.session_state[wcap] = _cap
+                    st.session_state[wlive] = True
+            else:
+                st.session_state[wlive] = True
+        if st.button(tr("Stop", "إيقاف"), width="stretch"):
+            st.session_state[wlive] = False
+
+    wcam_col, wres_col = st.columns([3, 4])
+    with wcam_col:
+        _wc = st.container(border=True)
+        with _wc:
+            ws_frame = st.empty()
+    with wres_col:
+        ws_word = st.empty()
+        ws_conf = st.empty()
+        ws_status = st.empty()
+
+    @st.fragment(run_every=0.1)
+    def words_loop():
+        if not st.session_state.get(wlive, False):
+            return
+        cap = st.session_state.get(wcap)
+        if cap is None or not cap.isOpened():
+            st.session_state[wlive] = False
+            return
+        try:
+            pl, _ew = _words_live_pipe()
+        except Exception as _e:
+            st.session_state[wlive] = False
+            ws_status.error(f"{_e}")
+            return
+        ok, frame = cap.read()
+        if not ok:
+            return
+        out = pl.update(engine.downscale_live(frame))
+        if out.get("error"):
+            st.session_state[wlive] = False
+            ws_status.error(out["error"])
+            return
+        ws_frame.image(out["overlay"], channels="BGR", width="stretch", output_format="JPEG")
+        if out["ready"] and out["word"]:
+            ws_word.markdown(f"<div class='big-slot'><div class='big-letter'>{out['word']}</div>"
+                             f"<div class='meta'>confidence {out['conf']:.2f}</div></div>",
+                             unsafe_allow_html=True)
+            ws_conf.markdown(_conf_bar(int(out["conf"] * 100)), unsafe_allow_html=True)
+        elif out["hand"]:
+            ws_word.markdown("<div class='big-slot'><div class='meta'>Collecting frames…</div></div>",
+                             unsafe_allow_html=True)
+            ws_conf.markdown("")
+        else:
+            ws_word.markdown("<div class='big-slot'><div class='meta'>Waiting for a hand…</div></div>",
+                             unsafe_allow_html=True)
+            ws_conf.markdown("")
+
+    words_loop()
+
+    st.divider()
+    st.markdown(tr(
+        "**How it works:** English ISLR — MediaPipe two-hand landmarks are re-sampled to a fixed "
+        "40-frame window and classified by an LSTM. A hold a hand (~4 s) to fill the window, drop "
+        "it for 1 s to start a new word.",
+        "**كيف تعمل:** نظام ISLR إنجليزي مستقل — لاندماركات اليدين تُعاد عيناتها إلى نافذة 40 إطاراً "
+        "ثابتة ويصنّفها LSTM. أبقِ يدك (~4 ثوانٍ) لتمتلئ النافذة، ثم فارق يد 1 ثانية لبدء كلمة جديدة."))
+
 st.markdown(tr(
     "<div class='meta' style='margin-top:24px'>Arabic: val 95.18% · 32 ArASL signs · "
-    "English: val 100% · 24 ASL signs — local Streamlit interface (M3–M11 + P1 + EN)</div>",
+    "English: val 100% · 24 ASL signs · Words (EN): held-out test 63.6% · 10 words — "
+    "local Streamlit interface (M3–M11 + P1 + EN + W)</div>",
     "<div class='meta' style='margin-top:24px'>العربي: val 95.18% · 32 إشارة ArASL · "
-    "English: val 100% · 24 ASL signs — واجهة محلية Streamlit (M3–M11 + P1 + EN)</div>"),
+    "English: val 100% · 24 ASL signs · الكلمات (إنج): اختبار 63.6% · 10 كلمات — "
+    "واجهة محلية Streamlit (M3–M11 + P1 + EN + W)</div>"),
     unsafe_allow_html=True)
