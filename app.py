@@ -148,6 +148,15 @@ h1 { font-size: 24px !important; line-height: 1.2; margin: 0 0 4px !important; }
   border: 1.5px dashed var(--border); border-radius: 12px; color: var(--text-secondary);
   font-size: 14px; text-align: center; background: var(--surface-card); box-sizing: border-box; }
 
+/* كارت الكاميرا الحي (وتتبُّع كلمات إنجليزية): صندوق ثابت الأبعاد يمنع الفراغ الأبيض بين
+   الفريمات — الحاوية لا تنهار لحظياً قبل رسم الفريم الجديد (الوميض المتكرر)، ويظهر أي
+   فكّ تشفير داخل نفس البُعد دون إفراغ العنصر البصري بين فريمين. */
+[data-testid="stVerticalBlockBorderWrapper"] .stImageContainer,
+[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stImage"] {
+  width: 100% !important; aspect-ratio: 4 / 3; overflow: hidden; }
+[data-testid="stVerticalBlockBorderWrapper"] .stImageContainer img {
+  width: 100% !important; height: 100% !important; object-fit: contain; display: block; }
+
 /* فقاعات كشف AI والتراكم */
 .reveal-stage { overflow: hidden; max-height: 72px; }
 .reveal-stage .rev-raw { display: flex; gap: 3px; }
@@ -549,6 +558,7 @@ with tab_live:
             return
         ok, frame = cap.read()
         if not ok:
+            # احتفظ بآخر فريم مُعروض دون أي كتابة في العنصر البصري — لا يُفرَّغ أبداً بين فريمين.
             return
         frame = engine.downscale_live(frame)
 
