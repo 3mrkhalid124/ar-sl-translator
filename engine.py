@@ -996,8 +996,15 @@ class LivePipeline:
         try:
             ts = time.monotonic() - self.t0
             prof = {}
-            overlay, result = process_frame(frame, _next_ts_ms(), prof)
+            dts = _next_ts_ms()
+            overlay, result = process_frame(frame, dts, prof)
             events = self.seq.feed(result["hand"], result["idx"], result["conf"], ts)
+            if _TRACE:
+                print("[LIVE-VOTE] feed(hand=%s idx=%s conf=%.4f) window=%d/%d "
+                      "committed=%s unknown=%s ts_ms=%d" %
+                      (result["hand"], result["idx"], result["conf"],
+                       len(self.seq._wins), self.seq.vote_window,
+                       events["committed"], result["unknown"], dts), flush=True)
             out = {**result, "events": events, "overlay": overlay, "timings": prof, "word": events["word"],
                    "corrected": None, "audio": None, "error": None,
                    "words": list(self.words), "sentence": self.sentence}
