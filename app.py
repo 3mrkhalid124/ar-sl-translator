@@ -143,8 +143,9 @@ h1 { font-size: 24px !important; line-height: 1.2; margin: 0 0 4px !important; }
         padding: 2px 12px; font-size: 20px; font-weight: 500; color: var(--text-primary); }
 .sent-sep { color: var(--text-secondary); }
 
-/* صندوق مكان الكاميرا الفارغ (يُظهر قبل بدء الالتقاط أو عند إيقاف الكاميرا) */
-.cam-empty { display: flex; align-items: center; justify-content: center; min-height: 220px;
+/* صندوق مكان الكاميرا الفارغ (يُظهر قبل بدء الالتقاط أو عند إيقاف الكاميرا) — بنفس أبعاد
+   صندوق الفريم الحي كي لا يظهر فراغ عمودي كبير بين الحالتين. */
+.cam-empty { display: flex; align-items: center; justify-content: center; aspect-ratio: 4 / 3;
   border: 1.5px dashed var(--border); border-radius: 12px; color: var(--text-secondary);
   font-size: 14px; text-align: center; background: var(--surface-card); box-sizing: border-box; }
 
@@ -196,6 +197,14 @@ h1 { font-size: 24px !important; line-height: 1.2; margin: 0 0 4px !important; }
 /* تفاصيل نصية متناسقة مع السمة */
 .stMarkdown, .stCaption, .stText { font-family: 'Cairo', sans-serif; color: var(--text-primary); }
 .stCheckbox label { color: var(--text-primary); }
+
+/* ===== كان الاختصار: إحكام التخطيط — توازن الارتفاعات وتقليل الفجوات (بلا تغيير ألوان) ===== */
+.stMainBlockContainer { padding: 6px 12px; }
+[data-testid="stTabs"] [role="tabpanel"], [data-testid="stTabs"] [data-baseweb="tab-panel"] { padding: 0 !important; }
+[data-testid="stVerticalBlock"] { gap: 0.4rem !important; }
+.stButton button { min-height: 44px; }
+[data-testid="stDivider"] { margin: 10px 0 !important; }
+[data-testid="stExpander"] summary { min-height: 0 !important; }
 
 /* حذف كل التدرجات والظلال مضمون أعلى: لا raw-gradient / لا box-shadow في الملف */
 </style>
