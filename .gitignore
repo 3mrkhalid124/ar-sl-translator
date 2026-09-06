@@ -8,3 +8,7 @@ assets/
 logs/
 *.log
 .pytest_cache/
+debug/
+debug_crops/
+train_ar.err
+train_en.err
