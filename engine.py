@@ -900,8 +900,11 @@ def _load_groq_key() -> str:
 
 
 def correct_word(raw: str, language: str = "ar"):
-    """M7: Groq → تصحيح كلمة. language='ar'/'en' يبدّل الـ prompt (نفس وظيفة التصحيح للغتين).
-    بلا مفتاح/إنترنت → raw بلا كسر. خلفي-متوافق (بدون وسيط = 'ar')."""
+    """M7: تعطيل كامل للتصحيح اللغوي — يُعاد النص الخام دائماً بلا أي نداء API ولا طبقة ذكاء.
+    (أُبقي raw وسيط = 'ar' للتوافق؛ لا يُستخدم الآن لأن العطّل شامل)."""
+    if not raw:
+        return {"text": "", "source": "raw", "api": False}
+    return {"text": raw, "source": "raw", "api": False}
     key = _load_groq_key()
     if not key or not raw:
         log().info("Groq: مفتاح غير متاح — raw %r", raw)

@@ -367,12 +367,6 @@ with tab_live:
     if "cap" not in st.session_state:
         st.session_state.cap = None
 
-    has_key = bool(engine._load_groq_key())
-    st.caption("Groq: " + (
-        tr("Active — auto-correcting text", "مفعّل — يُصحَّح النص تلقائياً") if has_key
-        else tr("Inactive — raw text used until GROQ_API_KEY is set in .env",
-                "غير مفعّل — يُستخدم النص الخام حتى إضافة GROQ_API_KEY في .env")))
-
     col_ctrl = st.columns([1, 3])[0]
     with col_ctrl:
         cb1, cb2, cb3 = st.columns([2, 2, 3])
@@ -391,9 +385,6 @@ with tab_live:
                 st.session_state.live = False
         with cb3:
             st.checkbox(tr("🔧 Debug diagnostics", "🔧 معلومات تشخيصية"), key="dbg_show")
-        if has_key is False:
-            st.info(tr("Set GROQ_API_KEY in .env to auto-correct text",
-                       "أضف مفتاح Groq في .env ليُصحَّح النص تلقائياً"), icon="\U0001F511")
 
     if st.session_state.get("dbg_show"):
         _dl = "English" if IS_EN else "عربي"
@@ -626,14 +617,13 @@ with tab_live:
             "window — one stray frame no longer resets progress) — or press **✓ Pin** to commit "
             "the shown letter instantly (bypasses the window/confidence). **␣ New word** closes the "
             "current word immediately (same as the 2.5 s silence auto-close — both work). Completed "
-            "words form a separate list shown with clear spaces; Groq corrects the full sentence "
-            "and the audio speaks it with word pauses.",
+            "words form a separate list shown with clear spaces, and the audio speaks it with word pauses.",
             "**كيف تعمل:** اعرض إشارةً لـ **5 من آخر 7 إطارات** بثقة ≥ 0.90 مع تحقّق هندسي "
             "ليُلتزم الحرف — تصويت أغلبية على نافذة انزلاقية، فإطار واحد مختلف لا يصفّر التقدّم "
             "(على عكس «إطارات متتالية» سابقاً). أو اضغط **✓ تثبيت** لتُثبّت الحرف المعروض فوراً "
             "(يتجاوز النافذة/الثقة). زر **␣ كلمة جديدة** يغلق الكلمة الحالية فوراً (مثل آلية "
             "الصمت 2.5 ثانية — كلاهما يعمل). الكلمات المكتملة تتراكم كقائمة منفصلة تُعرض بمسافات "
-            "واضحة؛ Groq يصحّح الجملة كاملة ويُنطقها الصوت بفواصل كلمات."))
+            "واضحة ويُنطقها الصوت بفواصل كلمات."))
 
 with tab_dict:
     st.title("Sign Language Dictionary" if IS_EN else "قاموس الإشارات")
