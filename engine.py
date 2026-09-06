@@ -277,14 +277,18 @@ def _write_class_map() -> None:
                    ensure_ascii=False, indent=1), encoding="utf-8")
 
 
-def train_cnn() -> None:
+def train_cnn(epochs: int | None = None, target: float | None = None) -> None:
     """M3: تدريب → التحقق على 15% held-out → حفظ cnn.pt + class_map.json. Goal: val ≥ 95%.
-    يستأنف من models/cnn.pt إن وُجد (نفس المعمارية). الحد الأقصى: MAX_EPOCHS epochs؛
-    توقف مبكر تلقائي عند أول epoch يصل فيه val_acc ≥ TARGET_VAL_ACC."""
+    يستأنف من models/cnn.pt إن وُجد (نفس المعمارية). الحد الأقصى: epochs (افتراضاً MAX_EPOCHS)؛
+    توقف مبكر تلقائي عند أول epoch يصل فيه val_acc ≥ tv (افتراضاً TARGET_VAL_ACC، قابل للرفع).
+    best_acc يبدأ من val الحالي للـ checkpoint إن وُجد — لا يُستبدل checkpoint إلا بنموذج أفضل.
+    تكبير مستهدف: الفئات التي acc_checkpoint < 0.91 تُكرَّر 2x في pool كل epoch (إن وُجدت)."""
     import torch
     from sklearn.model_selection import train_test_split
 
     torch.set_num_threads(CPU_THREADS)
+    epochs = epochs or MAX_EPOCHS
+    tv = TARGET_VAL_ACC if target is None else target
     images, labels = load_dataset()
     x = np.transpose(images, (0, 3, 1, 2)).astype(np.float32)  # (N,1,64,64)
     x_train, x_val, y_train, y_val = train_test_split(
@@ -299,24 +303,60 @@ def train_cnn() -> None:
     opt = torch.optim.Adam(model.parameters(), lr=LR)
     crit = torch.nn.CrossEntropyLoss()
     train_n = x_train.shape[0]
+    y_train_np = y_train.numpy()
     best_acc = 0.0
     reached = False
+    weak_cls: list = []
 
     if MODEL_PATH.exists():
         try:
             model.load_state_dict(torch.load(MODEL_PATH, weights_only=True))
             log().info("استئناف من %s — weights محمّلة (نفس المعمارية)", MODEL_PATH.name)
+            model.eval()
+            per_cls = np.zeros(EXPECTED_CLASSES)
+            cls_cnt = np.zeros(EXPECTED_CLASSES)
+            vcorrect = 0
+            with torch.no_grad():
+                for i in range(0, x_val.shape[0], BATCH_SIZE):
+                    xb = x_val[i:i + BATCH_SIZE]
+                    yb = y_val[i:i + BATCH_SIZE]
+                    pred = model(xb).argmax(1).numpy()
+                    ybn = yb.numpy()
+                    vcorrect += int((ybn == pred).sum())
+                    for c in range(EXPECTED_CLASSES):
+                        m = ybn == c
+                        per_cls[c] += int((pred[m] == c).sum())
+                        cls_cnt[c] += int(m.sum())
+            best_acc = vcorrect / y_val.shape[0]
+            accs = per_cls / np.maximum(cls_cnt, 1)
+            weak_cls = [int(c) for c in range(EXPECTED_CLASSES) if accs[c] < 0.91]
+            log().info("checkpoint الحالي val=%.4f — بداية best_acc منه؛ لن يُستبدل إلا بأفضل", best_acc)
+            log().info("دقة الفئات (checkpoint الحالي): %s",
+                       dict(zip(CLASS_SYMS, [round(float(a), 3) for a in accs])))
+            if weak_cls:
+                log().warning("فئات ضعيفة مستهدفة بزيادة التكرار 2x (acc<0.91): %s",
+                              [CLASS_SYMS[c] for c in weak_cls])
+            else:
+                log().info("لا فئات ≤ 0.91 — تدريب عادي متوازن")
         except Exception as exc:
             log().warning("تعذر تحميل %s (%s) — بدء من الصفر", MODEL_PATH.name, exc)
 
-    for ep in range(1, MAX_EPOCHS + 1):
+    base_pool = np.arange(train_n)
+    if weak_cls:
+        extra_idx = np.concatenate([np.where(y_train_np == c)[0] for c in weak_cls])
+        pool = np.concatenate([base_pool, extra_idx])
+    else:
+        pool = base_pool
+    pool_n = pool.shape[0]
+
+    for ep in range(1, epochs + 1):
         model.train()
         total, correct, loss_sum = 0, 0, 0.0
-        perm = torch.randperm(train_n)
+        perm = np.random.permutation(pool_n)
         ag_rng = np.random.default_rng(11 + ep)
         t0 = time.time()
-        for i in range(0, train_n, BATCH_SIZE):
-            ids = perm[i:i + BATCH_SIZE]
+        for i in range(0, pool_n, BATCH_SIZE):
+            ids = torch.from_numpy(pool[perm[i:i + BATCH_SIZE]])
             xb = torch.from_numpy(_augment_batch(x_train[ids].numpy(), ag_rng)).float()
             yb = y_train[ids]
             opt.zero_grad()
@@ -343,22 +383,22 @@ def train_cnn() -> None:
         if val_acc > best_acc:
             best_acc = val_acc
             torch.save(model.state_dict(), MODEL_PATH)
-        if val_acc >= TARGET_VAL_ACC:
-            log().info("الوصول للهدف (val ≥ %.2f) عند epoch %d — توقف مبكر", TARGET_VAL_ACC, ep)
+        if val_acc >= tv:
+            log().info("الوصول للهدف (val ≥ %.2f) عند epoch %d — توقف مبكر", tv, ep)
             reached = True
             break
 
     if not reached:
         log().warning("val acc النهائي %.4f < الهدف %.2f بعد %d epochs", best_acc,
-                      TARGET_VAL_ACC, MAX_EPOCHS)
+                      tv, epochs)
 
     _per_class_val(x_val, y_val)
     _write_class_map()
     log().info("أُنجز التدريب: best val %.4f | checkpoint %s | calc %s", best_acc, MODEL_PATH.name, CLASS_MAP_PATH.name)
     if reached:
-        print(f"[SELFTEST] train: PASS best_val_acc={best_acc:.4f} target={TARGET_VAL_ACC}")
+        print(f"[SELFTEST] train: PASS best_val_acc={best_acc:.4f} target={tv}")
     else:
-        print(f"[SELFTEST] train: FAIL best_val_acc={best_acc:.4f} target={TARGET_VAL_ACC}")
+        print(f"[SELFTEST] train: FAIL best_val_acc={best_acc:.4f} target={tv}")
 
 
 def _per_class_val(x_val, y_val) -> None:
@@ -1116,7 +1156,19 @@ if __name__ == "__main__":
         print(f"[SELFTEST] fetch_data: PASS shape={imgs.shape} classes={len(np.unique(labels))} "
               f"dict_pngs={len(list(DICT_DIR.glob('*.png')))}")
     elif "--train" in sys.argv:
-        train_cnn()
+        _n = None
+        _t = None
+        _i = sys.argv.index("--train")
+        if _i + 1 < len(sys.argv) and sys.argv[_i + 1].isdigit():
+            _n = int(sys.argv[_i + 1])
+        if "--target" in sys.argv:
+            _ti = sys.argv.index("--target")
+            if _ti + 1 < len(sys.argv):
+                try:
+                    _t = float(sys.argv[_ti + 1])
+                except ValueError:
+                    pass
+        train_cnn(epochs=_n, target=_t)
         images, labels = load_dataset()
         idx, conf = classify(images[0][:, :, 0])
         print(f"[SELFTEST] classify smoke: idx={idx} en={ENG_LABELS[idx]} "
@@ -1126,4 +1178,4 @@ if __name__ == "__main__":
     elif "--selftest" in sys.argv:
         sys.exit(run_selftest())
     else:
-        print("استخدام: --fetch-data | --train | --camera | --selftest")
+        print("استخدام: --fetch-data | --train [epochs] [--target VAL] | --camera | --selftest")
