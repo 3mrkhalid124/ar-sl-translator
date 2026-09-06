@@ -312,7 +312,8 @@ with tab_live:
 
     col_ctrl = st.columns([1, 3])[0]
     with col_ctrl:
-        if st.button(tr("Start camera", "بدء التقاط الكاميرا"), type="primary", width="stretch"):
+        if st.button(tr("Start camera", "بدء التقاط الكاميرا"), type="primary", width="stretch",
+                     key="btn_start_live"):
             if st.session_state.cap is None or not st.session_state.cap.isOpened():
                 cap = cv2.VideoCapture(0)
                 if not cap.isOpened():
@@ -320,7 +321,7 @@ with tab_live:
                 else:
                     st.session_state.cap = cap
             st.session_state.live = True
-        if st.button(tr("Stop", "إيقاف"), width="stretch"):
+        if st.button(tr("Stop", "إيقاف"), width="stretch", key="btn_stop_live"):
             st.session_state.live = False
         if has_key is False:
             st.info(tr("Set GROQ_API_KEY in .env to auto-correct text",
@@ -497,7 +498,8 @@ with tab_live:
                 data=st.session_state[f"aud_{lang}"],
                 file_name=f"sign_word_{lang}.mp3",
                 mime="audio/mpeg",
-                width="stretch")
+                width="stretch",
+                key="btn_dl_audio")
 
     st.divider()
     st.markdown(tr(
@@ -646,7 +648,8 @@ with tab_wlive:
 
     wcol_ctrl = st.columns([1, 3])[0]
     with wcol_ctrl:
-        if st.button(tr("Start words camera", "بدء كاميرا الكلمات"), type="primary", width="stretch"):
+        if st.button(tr("Start words camera", "بدء كاميرا الكلمات"), type="primary", width="stretch",
+                     key="btn_start_words"):
             if st.session_state[wcap] is None or not st.session_state[wcap].isOpened():
                 _cap = cv2.VideoCapture(0)
                 if not _cap.isOpened():
@@ -656,7 +659,7 @@ with tab_wlive:
                     st.session_state[wlive] = True
             else:
                 st.session_state[wlive] = True
-        if st.button(tr("Stop", "إيقاف"), width="stretch"):
+        if st.button(tr("Stop", "إيقاف"), width="stretch", key="btn_stop_words"):
             st.session_state[wlive] = False
 
     wcam_col, wres_col = st.columns([3, 4])
