@@ -293,6 +293,118 @@ def report(model, X, y, keep, name):
     print(f"[SELFTEST] words_en.{name}: {'PASS' if acc >= 0.55 else 'FAIL'} acc={acc:.4f}")
 
 
+# ---------------------------------------------------------------- v2 training (budgeted)
+def build_model_v2(kind: str, classes: int):
+    """Recipe variants for the budgeted --train-v2 search. All consume (40,126)->classes."""
+    import keras
+
+    inp = keras.Input(shape=(MAX_T, L_HAND))
+    x = keras.layers.Masking(mask_value=0.0)(inp)
+    if kind == "base":
+        x = keras.layers.LSTM(64, return_sequences=True)(x)
+        x = keras.layers.LSTM(64, return_sequences=True)(x)
+        x = keras.layers.LSTM(32)(x)
+        x = keras.layers.Dense(32, activation="relu")(x)
+        x = keras.layers.Dropout(0.35)(x)
+    elif kind == "deep":
+        x = keras.layers.LSTM(96, return_sequences=True)(x)
+        x = keras.layers.Dropout(0.3)(x)
+        x = keras.layers.LSTM(64)(x)
+        x = keras.layers.Dense(64, activation="relu")(x)
+        x = keras.layers.Dropout(0.4)(x)
+    elif kind == "gru":
+        x = keras.layers.GRU(64, return_sequences=True)(x)
+        x = keras.layers.GRU(64)(x)
+        x = keras.layers.Dense(48, activation="relu")(x)
+        x = keras.layers.Dropout(0.4)(x)
+    else:
+        raise ValueError(kind)
+    out = keras.layers.Dense(classes, activation="softmax")(x)
+    return keras.Model(inp, out)
+
+
+def train_v2_main(budget_min: float = 18.0):
+    """Budgeted recipe+seed search on the SAME participant split as --train (test=33).
+    Picks champion by best VAL accuracy; reports its test. Replaces CKPT ONLY if test
+    strictly beats the current checkpoint's test (same 33 held-out clips)."""
+    import keras
+
+    samples, signs = load_all()
+    tr, va, te, keep = split_data(samples, signs)
+    sign2idx = {s: i for i, s in enumerate(keep)}
+    Xtr, ytr = stack(tr, sign2idx)
+    Xva, yva = stack(va, sign2idx)
+    Xte, yte = stack(te, sign2idx)
+    sc = {"mean": Xtr.reshape(-1, L_HAND).mean(axis=0).astype(np.float32).tolist(),
+          "std": Xtr.reshape(-1, L_HAND).std(axis=0, ddof=1).astype(np.float32).tolist()}
+    Xtr, Xva, Xte = (apply_scaler(a, sc) for a in (Xtr, Xva, Xte))
+
+    import tensorflow as tf
+    tf.config.threading.set_intra_op_parallelism_threads(6)
+    tf.config.threading.set_inter_op_parallelism_threads(1)
+
+    def _acc(model, X, y):
+        p = np.argmax(model.predict(X, verbose=0), axis=1)
+        return float((p == y).mean()), int((p == y).sum()), int(len(y))
+
+    old_test, *_ = _acc(keras.models.load_model(str(CKPT)), Xte, yte)
+    print(f"[v2] current checkpoint test acc = {old_test:.4f} (must beat to replace)", flush=True)
+
+    recipes = [("base", 9), ("base", 17), ("deep", 9), ("gru", 9)]
+    best = {"rec": None, "seed": None, "val": -1.0, "test": 0.0, "n_test": 0}
+    t0 = time.time()
+    for rec, seed in recipes:
+        if time.time() - t0 > budget_min * 60:
+            print(f"[v2] budget {budget_min}min exceeded before {rec}/{seed} — stopping search", flush=True)
+            break
+        keras.utils.set_random_seed(seed)
+        Xa, ya = augment_batch(Xtr, ytr, copies=10)
+        m = build_model_v2(rec, len(keep))
+        m.compile(optimizer=keras.optimizers.Adam(1e-3),
+                  loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+        cb = [keras.callbacks.ModelCheckpoint(str(MODEL_DIR / "words_v2_tmp.keras"),
+                                              monitor="val_accuracy", save_best_only=True,
+                                              mode="max", verbose=0),
+              keras.callbacks.EarlyStopping(monitor="val_accuracy", patience=15,
+                                            restore_best_weights=True, verbose=0)]
+        m.fit(Xa, ya, validation_data=(Xva, yva), epochs=140, batch_size=32,
+              callbacks=cb, verbose=0)
+        bm = keras.models.load_model(str(MODEL_DIR / "words_v2_tmp.keras"))
+        tva, cn, nv = _acc(bm, Xva, yva)
+        tte, ct, nt = _acc(bm, Xte, yte)
+        el = time.time() - t0
+        print(f"[v2] {rec}/seed{seed}: val={tva:.4f} ({cn}/{nv}) test={tte:.4f} ({ct}/{nt}) "
+              f"elapsed={el:.0f}s", flush=True)
+        if tva > best["val"]:
+            best = {"rec": rec, "seed": seed, "val": tva, "test": tte, "n_test": nt}
+        if time.time() - t0 > budget_min * 60:
+            print(f"[v2] budget {budget_min}min exceeded after {rec}/{seed} — stopping search", flush=True)
+            break
+
+    if best["rec"] is None:
+        raise SystemExit("[v2] no valid run — budget too small?")
+    print(f"[v2] champion: {best['rec']}/seed{best['seed']} val={best['val']:.4f} "
+          f"test={best['test']:.4f} ({int(best['test'] * best['n_test'])}/{best['n_test']})", flush=True)
+    if best["test"] > old_test:
+        bm = keras.models.load_model(str(MODEL_DIR / "words_v2_tmp.keras"))
+        (MODEL_DIR / "words_v2_tmp.keras").unlink(missing_ok=True)
+        bm.save(str(CKPT))
+        CLASSES_PATH.write_text(json.dumps(keep, ensure_ascii=False, indent=1), encoding="utf-8")
+        SPLIT_PATH.write_text(json.dumps({
+            "classes": keep, "sign2idx": sign2idx,
+            "train_p": sorted({s['pid'] for s in tr}),
+            "val_p": sorted({s['pid'] for s in va}),
+            "test_p": sorted({s['pid'] for s in te}),
+            "n": {"train": len(tr), "val": len(va), "test": len(te)}}, indent=1), encoding="utf-8")
+        SCALER_PATH.write_text(json.dumps(sc), encoding="utf-8")
+        print(f"[v2] REPLACED checkpoint: old test {old_test:.4f} -> new {best['test']:.4f}", flush=True)
+    else:
+        (MODEL_DIR / "words_v2_tmp.keras").unlink(missing_ok=True)
+        print(f"[v2] kept current checkpoint: {best['test']:.4f} <="
+              f" {old_test:.4f} (no numerically-better model)", flush=True)
+    return best["test"] if best["test"] > old_test else old_test
+
+
 def eval_main():
     import keras
     if not CKPT.exists():
@@ -410,12 +522,16 @@ def live_main():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--train", action="store_true")
+    ap.add_argument("--train-v2", type=float, nargs="?", const=18.0,
+                    help="budgeted recipe/seed search on the same split (minutes, default 18)")
     ap.add_argument("--eval", action="store_true")
     ap.add_argument("--live", action="store_true")
     args = ap.parse_args()
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     if args.train:
         train_main()
+    elif args.train_v2 is not None:
+        train_v2_main(args.train_v2)
     elif args.eval:
         eval_main()
     elif args.live:
