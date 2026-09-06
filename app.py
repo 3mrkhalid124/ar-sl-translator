@@ -26,7 +26,7 @@ CSS = """
 :root {
   --bg-page: #FAF9F6; --surface-card: #FFFFFF; --border: #E5E2D9;
   --text-primary: #1A1A18; --text-secondary: #6B6960;
-  --accent: #D85A30;
+  --accent: #B44621;
   --success-bg: #EAF3DE; --success-text: #3B6D11;
   --warn-bg: #FBF3E0; --warn-text: #8A6D1E;
   --danger-bg: #FCEBEB; --danger-text: #A32D2D;
@@ -56,15 +56,46 @@ h1, h2, h3 { color: var(--text-primary) !important; font-weight: 500; }
   background: var(--accent); border-color: var(--accent); color: #FFFFFF; font-weight: 500;
 }
 
-/* تبويبات Streamlit: النشط = accent بخط سفلي */
+/* تبويبات Streamlit: النشط = accent بخط سفلي (v1.63: [data-testid=stTab] + نسخة قديمة [data-baseweb=tab]) */
 .stTabs [data-baseweb="tab-list"] { gap: 6px; }
-.stTabs [data-baseweb="tab"] {
-  background: transparent; color: var(--text-secondary); font-weight: 400;
+.stTabs [data-baseweb="tab"], .stTabs [data-testid="stTab"] {
+  background: transparent; color: var(--text-secondary) !important; font-weight: 400;
   border-radius: 8px; padding: 8px 16px; font-family: 'Cairo', sans-serif;
 }
-.stTabs [aria-selected="true"] { color: var(--accent) !important; font-weight: 500;
+.stTabs [data-baseweb="tab"]:hover, .stTabs [data-testid="stTab"]:hover { color: var(--accent) !important; }
+.stTabs [data-baseweb="tab"][aria-selected="true"], .stTabs [data-testid="stTab"][aria-selected="true"] {
+  color: var(--accent) !important; font-weight: 500;
   border-bottom: 2px solid var(--accent) !important; }
 .stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] { display: none; }
+
+/* ===== P1: كسر النصوص المخفية في الثيم الداكن — كل نص له تباين واضح مع خلفيته الفعلية ===== */
+:root, .stApp, [data-testid="stAppViewContainer"] { color-scheme: light; }
+
+/* تسميات العناصر (widget label للـradio/checkbox) — كانت #fafafa (غير مرئية) في الثيم الداكن */
+[data-testid="stWidgetLabel"] { color: var(--text-primary) !important; }
+
+/* captions (st.caption) — v1.63 تسميتهم stCaptionContainer لا .stCaption */
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p,
+.stCaption, .stCaption p { color: var(--text-secondary) !important; }
+
+/* أزرار معطلة — نص داكن مقروء على خلفية رمادية فاتحة (كان نصاً فاتحاً شفافاً 40%) */
+.stButton button:disabled, .stButton button[disabled=""] {
+  color: var(--text-secondary) !important; background: #EEEDE8 !important;
+  border-color: #DCD9CE !important; opacity: 1 !important; cursor: not-allowed; }
+
+/* عناصر اختيار إضافية (selectbox/multiselect إن أُضيفت لاحقاً) — نص داكن/خلفية بيضاء دائماً */
+[data-baseweb="select"], [data-baseweb="select"] * { color: var(--text-primary) !important; }
+[data-baseweb="popover"] [data-baseweb="menu"], [data-baseweb="popover"] [role="listbox"] {
+  background: var(--surface-card) !important; }
+[data-baseweb="menu"] li { color: var(--text-primary) !important; }
+[data-baseweb="menu"] li:hover { background: var(--success-bg) !important; color: var(--text-primary) !important; }
+
+/* حلقة التركيز — بلون accent داكن بدل الأحمر الافتراضي (أوضح على زر الـaccent) */
+.stButton button:focus-visible { box-shadow: 0 0 0 3px rgba(180, 70, 33, 0.55) !important;
+  outline-color: var(--accent) !important; }
+.stRadio [role="radiogroup"] label:focus-within { box-shadow: 0 0 0 2px rgba(180, 70, 33, 0.55); border-radius: 8px; }
+.stTabs [data-testid="stTab"]:focus-visible, .stTabs [data-baseweb="tab"]:focus-visible {
+  box-shadow: 0 0 0 2px rgba(180, 70, 33, 0.5); border-radius: 8px; }
 
 /* كروت موحّدة: سطح أبيض + حدود 1px + r=12 */
 .card { background: var(--surface-card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
