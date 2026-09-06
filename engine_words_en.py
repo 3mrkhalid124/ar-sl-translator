@@ -450,6 +450,7 @@ class WordsLive:
         self.fill = 0
         self.t_hand = None
         self._ts = 0
+        self._det_fails = 0
 
     def _frame_vec(self, res):
         vec = np.zeros(L_HAND, np.float32)
@@ -469,10 +470,17 @@ class WordsLive:
         import mediapipe as mp
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB,
                             data=cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
+        self._ts += 1  # MediaPipe VIDEO mode requires monotonically increasing timestamps;
+        # a constant timestamp makes detect_for_video raise every frame -> swallowed -> "no hand" forever.
         try:
             res = self.det.detect_for_video(mp_image, self._ts)
-        except Exception:
+            self._det_fails = 0
+        except Exception as _e:
+            self._det_fails += 1
             res = None
+            if self._det_fails % 60 == 1:  # trace (non-spammy): no silent detector crashes
+                print(f"[words_en] WARN detect_for_video failed {self._det_fails}x "
+                      f"({_e.__class__.__name__}: {_e})", flush=True)
         had = bool(res and res.hand_landmarks)
         vec = self._frame_vec(res) if had else np.zeros(L_HAND, np.float32)
         now = time.time()
