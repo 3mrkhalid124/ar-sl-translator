@@ -208,19 +208,7 @@ DICT_CLASSES = {0: "extended", 1: "extended", 2: "thumb", 3: "extended", 4: "ext
                 22: "extended", 23: "extended", 24: "extended", 25: "extended", 26: "extended",
                 27: "extended", 28: "thumb", 29: "thumb", 30: "extended", 31: "extended"}
 
-# P4: الكلمات العشر الفعلية المُدرَّبة لنموذج «كلمات إنجليزية» (engine_words_en) — فلتر Words في قاموس EN
-_EN_WORDS10 = [
-    ("hello", "Open palm at the forehead, then sweeps outward with open fingers."),
-    ("thankyou", "Fingertips touch the chin and sweep forward — the classic ASL gesture."),
-    ("please", "An open palm circles gently on the chest."),
-    ("yes", "A Y-shaped hand (thumb + pinky) nods up and down."),
-    ("no", "Index and middle pinch the thumb with a shake side to side."),
-    ("bye", "An open palm waves gently side to side."),
-    ("drink", "A loose 'C' hand lifts to the mouth and tips back."),
-    ("water", "The 'W' handshape (three fingers up) taps the chin."),
-    ("happy", "An open palm brushes upward in a circle over the chest."),
-    ("sleep", "A flat open palm rests against the cheek; eyes close."),
-]
+# P4: الكلمات العشر الفعلية المُدرَّبة لنموذج «كلمات إنجليزية» (engine_words_en) — مرجع تعليمي
 
 
 def _cat(idx):
@@ -665,7 +653,6 @@ with tab_dict:
             p = engine_en.DICT_EN_DIR / f"class_{i:02d}.png"
             return "data:image/png;base64," + base64.b64encode(p.read_bytes()).decode() if p.exists() else None
 
-        mode = st.radio("Show", ["Letters", "Words"], horizontal=True, key="dict_mode")
     else:
         n = engine.EXPECTED_CLASSES
         cmap_ar = _load_class_map()
@@ -679,36 +666,20 @@ with tab_dict:
         def _dict_uri(i):
             return _img_uri(i)
 
-        mode = "Letters"
-
-    # فلتر Words (P4): الكلمات العشر الفعلية المُدرَّبة لنموذج الكلمات الإنجليزي — مرجع تعليمي
-    if IS_EN and mode == "Words":
-        st.caption("The 10 words the English-Words LSTM is trained on — live in the "
-                   "'English Words' tab (reference only, not a live detection result)")
-        cols = st.columns(4)
-        for i, (word, shape) in enumerate(_EN_WORDS10):
-            card = ("<div class='dict-card' style='margin-top:14px; padding:12px'>"
-                    f"<span class='badge badge-index'>sign</span>"
-                    f"<div class='dict-name' style='font-size:22px'>{word}</div>"
-                    f"<div class='meta' style='min-height:0; font-size:12.5px; text-align:left'>{shape}</div>"
-                    "</div>")
-            with cols[i % 4]:
-                st.markdown(card, unsafe_allow_html=True)
-    else:
-        cols = st.columns(4)
-        for i in range(n):
-            info = _dict_info(i)
-            cat = _dict_cat(i)
-            uri = _dict_uri(i)
-            card = f"<div class='dict-card'>"
-            if uri:
-                card += f"<img src='{uri}' alt='{info['name']}' loading='lazy'/>"
-            card += f"<div class='dict-name'>{info['name']}</div>"
-            if cat:
-                card += f"<div class='dict-cat'>{tr(_VIS_LABEL_EN[cat], _VIS_LABEL[cat])}</div>"
-            card += "</div>"
-            with cols[i % 4]:
-                st.markdown(card, unsafe_allow_html=True)
+    cols = st.columns(4)
+    for i in range(n):
+        info = _dict_info(i)
+        cat = _dict_cat(i)
+        uri = _dict_uri(i)
+        card = f"<div class='dict-card'>"
+        if uri:
+            card += f"<img src='{uri}' alt='{info['name']}' loading='lazy'/>"
+        card += f"<div class='dict-name'>{info['name']}</div>"
+        if cat:
+            card += f"<div class='dict-cat'>{tr(_VIS_LABEL_EN[cat], _VIS_LABEL[cat])}</div>"
+        card += "</div>"
+        with cols[i % 4]:
+            st.markdown(card, unsafe_allow_html=True)
 
 
 # ---- بند 4: «كلمات إنجليزية» — نظام رابع منفصل (engine_words_en.py) — تحميل كسول، لا يمس الثلاثة العليا ----

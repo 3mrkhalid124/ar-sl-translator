@@ -32,15 +32,9 @@ def main():
     at.radio(key="lang_toggle").set_value("عربي").run()
     results.append(snapshot(at, "switch_ar_back"))
 
-    # 4) قاموس إنجليزي: التبديل بين Letters و Words
+    # 4) قاموس إنجليزي بعد P3: لا يوجد مبدّل Words — يجب أن يعرض الحروف فقط (radio=1: اللغة فقط)
     at.radio(key="lang_toggle").set_value("English").run()
-    try:
-        at.radio(key="dict_mode").set_value("Words").run()
-        results.append(snapshot(at, "dict_words"))
-        at.radio(key="dict_mode").set_value("Letters").run()
-        results.append(snapshot(at, "dict_letters"))
-    except Exception as e:
-        results.append((0, 1, [], [f"EXC dict_mode: {e}"], "dict_filter", 0, 0))
+    results.append(snapshot(at, "dict_en_letters"))
 
     # 4) إنجليزي + نقرة على أزرار الإدارة (Clear/Delete/Commit — ليست كاميرا)
     at.radio(key="lang_toggle").set_value("English").run()
