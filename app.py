@@ -621,15 +621,17 @@ with tab_live:
     st.divider()
     with st.expander(tr("How it works (click to expand)", "كيف تعمل؟ (اضغط للتفاصيل)")):
         st.markdown(tr(
-            "**How it works:** hold a sign for ≥ 5 consecutive frames with confidence ≥ 0.90 and a "
-            "top1−top2 margin ≥ 0.05 to commit a letter — or press **✓ Pin** to commit the shown "
-            "letter instantly (bypasses debounce/confidence). **␣ New word** closes the current word "
-            "immediately (same as the 2.5 s silence auto-close — both work). Completed words form a "
-            "separate list shown with clear spaces; Groq corrects the full sentence and the audio "
-            "speaks it with word pauses.",
-            "**كيف تعمل:** اعرض إشارة أمام الكاميرا ≥ 5 إطارات متتالية بثقة ≥ 0.90 مع "
-            "تحقّق هندسي ليُلتزم الحرف — أو اضغط **✓ تثبيت** لتُثبّت الحرف المعروض فوراً "
-            "(يتجاوز debounce/الثقة). زر **␣ كلمة جديدة** يغلق الكلمة الحالية فوراً (مثل آلية "
+            "**How it works:** hold a sign for 5 of the last 7 frames, each with confidence ≥ 0.90 "
+            "and a top1−top2 margin ≥ 0.05, to commit a letter (majority vote over a sliding "
+            "window — one stray frame no longer resets progress) — or press **✓ Pin** to commit "
+            "the shown letter instantly (bypasses the window/confidence). **␣ New word** closes the "
+            "current word immediately (same as the 2.5 s silence auto-close — both work). Completed "
+            "words form a separate list shown with clear spaces; Groq corrects the full sentence "
+            "and the audio speaks it with word pauses.",
+            "**كيف تعمل:** اعرض إشارةً لـ **5 من آخر 7 إطارات** بثقة ≥ 0.90 مع تحقّق هندسي "
+            "ليُلتزم الحرف — تصويت أغلبية على نافذة انزلاقية، فإطار واحد مختلف لا يصفّر التقدّم "
+            "(على عكس «إطارات متتالية» سابقاً). أو اضغط **✓ تثبيت** لتُثبّت الحرف المعروض فوراً "
+            "(يتجاوز النافذة/الثقة). زر **␣ كلمة جديدة** يغلق الكلمة الحالية فوراً (مثل آلية "
             "الصمت 2.5 ثانية — كلاهما يعمل). الكلمات المكتملة تتراكم كقائمة منفصلة تُعرض بمسافات "
             "واضحة؛ Groq يصحّح الجملة كاملة ويُنطقها الصوت بفواصل كلمات."))
 

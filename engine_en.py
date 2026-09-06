@@ -16,6 +16,7 @@
 import sys
 import time
 import json
+from collections import deque
 from pathlib import Path
 
 import numpy as np
@@ -49,6 +50,8 @@ MAX_EPOCHS_EN = 3
 TARGET_VAL_ACC_EN = 0.95
 CONF_THRESHOLD_EN = 0.90
 DEBOUNCE_FRAMES_EN = 5
+VOTE_WINDOW_EN = 7  # P4: نافذة انزلاقية للأغلبية — آخر 7 إطارات
+VOTE_MAJORITY_EN = 5  # P4: التزام الحرف عندما يبلغ عدده 5 من آخر 7
 SILENCE_SECONDS_EN = 2.5
 MARGIN_THRESHOLD_EN = 0.05  # margin-check عام: فرق احتمال top1−top2 المقبول
 
@@ -355,15 +358,20 @@ def process_frame_en(frame, ts_ms: int, prof=None):
 
 
 class SignSequencerEN:
-    """نسخة من SignSequencer العربي برموز إنجليزية — التمييز الثلاثي (حرف/غير معروف/لا يد)."""
+    """نسخة من SignSequencer العربي برموز إنجليزية — التمييز الثلاثي (حرف/غير معروف/لا يد).
+    P4: الالتزام بأغلبية نافذة انزلاقية (افتراضياً 5 من آخر 7) — يصمد أمام رمشة إطارٍ آخر؛
+    لا تُحسب سوى الإطارات ذات الثقة ≥ العتبة، فلا التزامٌ تلقائيٌ بثقة أدنى."""
 
     def __init__(self, conf_threshold=CONF_THRESHOLD_EN, debounce=DEBOUNCE_FRAMES_EN,
-                 silence_seconds=SILENCE_SECONDS_EN, max_word=ar.MAX_WORD_LEN):
+                 silence_seconds=SILENCE_SECONDS_EN, max_word=ar.MAX_WORD_LEN,
+                 vote_window=None, vote_majority=None):
         self.conf_threshold = conf_threshold
         self.debounce = debounce
+        self.vote_window = vote_window if vote_window is not None else debounce
+        self.vote_majority = vote_majority if vote_majority is not None else debounce
         self.silence_seconds = silence_seconds
         self.max_word = max_word
-        self._votes = {}
+        self._wins = deque(maxlen=self.vote_window)
         self._last_idx = None
         self._last_conf = 0.0
         self._committed_idx = None
@@ -377,31 +385,28 @@ class SignSequencerEN:
                   "finalized": None}
         if hand_seen and idx is not None:
             self.last_hand_time = ts
-            if idx == self._last_idx and conf >= self.conf_threshold:
-                self._votes[idx] = self._votes.get(idx, 0) + 1
-                self._last_conf = conf
-            elif conf >= self.conf_threshold:
-                self._votes = {idx: 1}
-                self._last_idx = idx
+            if conf >= self.conf_threshold:
+                self._wins.append(idx)
                 self._last_conf = conf
             else:
-                self._votes = {}
-                self._last_idx = idx
-            if idx != self._committed_idx and self._votes.get(idx, 0) >= self.debounce:
+                self._wins.append(None)
+            self._last_idx = idx
+            n = self._wins.count(idx)
+            if idx != self._committed_idx and n >= self.vote_majority:
                 if len(self.word) >= self.max_word:
                     self._finalize()
                 self.word.append(idx)
                 events["committed"] = (idx, CLASS_EN_SYMS[idx], self._last_conf)
                 self._committed_idx = idx
-                self._votes[idx] = 0
+                self._wins.clear()
             events["word"] = "".join(CLASS_EN_SYMS[i] for i in self.word)
             ar._trace("feed_en", "conf=", f"{conf:.4f}", "th=", self.conf_threshold,
                       "commit=", "YES" if events["committed"] else "no",
-                      "votes=", dict(self._votes), "word=", repr(events["word"]))
+                      "win=", list(self._wins), "word=", repr(events["word"]))
         elif hand_seen:
             ar._trace("feed_en", "hand-only(unknown)", "no_commit")
             self.last_hand_time = ts
-            self._votes = {}
+            self._wins.clear()
             self._last_idx = None
             return events
         else:
@@ -424,14 +429,14 @@ class SignSequencerEN:
             self.word.pop()
         self._committed_idx = None
         self._last_idx = None
-        self._votes = {}
+        self._wins.clear()
 
     def clear(self):
         """تحكم يدوي: مسح كل الكلمة الحية (فوري، بلا انتظار صمت)."""
         self.word = []
         self._committed_idx = None
         self._last_idx = None
-        self._votes = {}
+        self._wins.clear()
 
     def finalize_now(self):
         """تحكم يدوي: يغلق الكلمة الحالية ويصفّر المخزن — يعيدها نصاً أو None (فورية، بلا صمت)."""
@@ -450,7 +455,7 @@ class SignSequencerEN:
         self.word.append(idx)
         self._committed_idx = idx
         self._last_idx = idx
-        self._votes = {}
+        self._wins.clear()
         events["committed"] = (idx, CLASS_EN_SYMS[idx], conf or self._last_conf)
         events["word"] = "".join(CLASS_EN_SYMS[i] for i in self.word)
         return events
@@ -460,8 +465,10 @@ class LivePipelineEN:
     """خط أنابيب إنجليزي كامل: detect+crop → CNN+margin → تسلسل → Groq(en) → gTTS(en)."""
 
     def __init__(self, conf_threshold=CONF_THRESHOLD_EN, debounce=DEBOUNCE_FRAMES_EN,
-                 silence_seconds=SILENCE_SECONDS_EN, auto_correct=True, enable_profile=True):
-        self.seq = SignSequencerEN(conf_threshold, debounce, silence_seconds)
+                 silence_seconds=SILENCE_SECONDS_EN, auto_correct=True, enable_profile=True,
+                 vote_window=VOTE_WINDOW_EN, vote_majority=VOTE_MAJORITY_EN):
+        self.seq = SignSequencerEN(conf_threshold, debounce, silence_seconds,
+                                   vote_window=vote_window, vote_majority=vote_majority)
         self.t0 = time.monotonic()
         self.auto_correct = auto_correct
         self._profiler = ar.FrameProfiler(tag="en") if enable_profile else None

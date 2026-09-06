@@ -14,6 +14,7 @@ import os
 import queue
 import sys
 import time
+from collections import deque
 from pathlib import Path
 
 import cv2
@@ -57,6 +58,8 @@ IMG_SIZE = 64
 
 CONF_THRESHOLD = 0.90  # Priority 1: 0.85 → 0.90 (يخفف false positives مع التحقق الهندسي)
 DEBOUNCE_FRAMES = 5  # Priority 1: 3 → 5
+VOTE_WINDOW = 7  # P4: نافذة انزلاقية للأغلبية — آخر 7 إطارات يُحتسب منها
+VOTE_MAJORITY = 5  # P4: التزام الحرف عندما يبلغ عدده نافذة (5 من آخر 7) — يصمد أمام رمشة إطار مختلف
 SILENCE_SECONDS = 2.5
 MAX_WORD_LEN = 40
 
@@ -772,16 +775,23 @@ def run_camera(source=0):
 # ---------------------------------------------------------------- M5/M6: سلسلة إشارات + كلمة
 
 class SignSequencer:
-    """M5+M6: التزام بالحرف عبر debounce (ثقة ≥ عتبة لعدة إطارات)، بناء كلمة، إغلاقها عند الصمت.
+    """M5+M6: التزام بالحرف عبر أغلبية نافذة انزلاقية (P4) — يُلتزم الحرف عندما يتجاوز
+    عدده في آخر vote_window إطاراً حد vote_majority (افتراضياً 5 من آخر 7)، فرمزُ إطارٍ
+    مختلفٍ أو ثقةٍ هابطةٍ لا يصفّر التقدم كما كان الحال مع «إطارات متتالية» الهش.
+    لا تُحسب سوى الإطارات ذات الثقة ≥ العتبة (أقل من العتبة يُخزن None في النافذة)،
+    فلا يمكن بأي حال التزامٌ تلقائي بثقة أدنى من CONF_THRESHOLD.
     لا يُعاد الالتزام بنفس الحرف حتى انقطاع اليد أو تغيّر الحرف (يمنع تكراراً صناعياً)."""
 
     def __init__(self, conf_threshold=CONF_THRESHOLD, debounce=DEBOUNCE_FRAMES,
-                 silence_seconds=SILENCE_SECONDS, max_word=MAX_WORD_LEN):
+                 silence_seconds=SILENCE_SECONDS, max_word=MAX_WORD_LEN,
+                 vote_window=None, vote_majority=None):
         self.conf_threshold = conf_threshold
         self.debounce = debounce
+        self.vote_window = vote_window if vote_window is not None else debounce
+        self.vote_majority = vote_majority if vote_majority is not None else debounce
         self.silence_seconds = silence_seconds
         self.max_word = max_word
-        self._votes = {}
+        self._wins = deque(maxlen=self.vote_window)
         self._last_idx = None
         self._last_conf = 0.0
         self._committed_idx = None
@@ -794,33 +804,30 @@ class SignSequencer:
         events = {"committed": None, "word": "".join(CLASS_SYMS[i] for i in self.word), "finalized": None}
         if hand_seen and idx is not None:
             self.last_hand_time = ts
-            if idx == self._last_idx and conf >= self.conf_threshold:
-                self._votes[idx] = self._votes.get(idx, 0) + 1
-                self._last_conf = conf
-            elif conf >= self.conf_threshold:
-                self._votes = {idx: 1}
-                self._last_idx = idx
+            if conf >= self.conf_threshold:
+                self._wins.append(idx)
                 self._last_conf = conf
             else:
-                self._votes = {}
-                self._last_idx = idx
-            if idx != self._committed_idx and self._votes.get(idx, 0) >= self.debounce:
+                self._wins.append(None)
+            self._last_idx = idx
+            n = self._wins.count(idx)
+            if idx != self._committed_idx and n >= self.vote_majority:
                 if len(self.word) >= self.max_word:
                     self._finalize()
-                self.word.append(idx)  # نصيحة: نخزّن الرمز
+                self.word.append(idx)
                 events["committed"] = (idx, CLASS_SYMS[idx], self._last_conf)
                 self._committed_idx = idx
-                self._votes[idx] = 0
+                self._wins.clear()
             events["word"] = "".join(CLASS_SYMS[i] for i in self.word)
             _trace("feed", "hand+idx", "conf=", f"{conf:.4f}", "th=", self.conf_threshold,
                    "commit=", "YES" if events["committed"] else "no",
-                   "votes=", dict(self._votes), "word=", repr(events["word"]))
+                   "win=", list(self._wins), "word=", repr(events["word"]))
         elif hand_seen:
             # Priority 1 — يد مرئية بلا تصنيف (رفض هندسي → 'غير معروف'): تُحدَّث last_hand_time فقط،
-            # تُصفَّر الأصوات، بلا التزام حرف وبلا إنهاء كلمة مبكر حتى تختفي اليد أو يتوضح الوضع.
+            # تُصفَّر النافذة، بلا التزام حرف وبلا إنهاء كلمة مبكر حتى تختفي اليد أو يتوضح الوضع.
             _trace("feed", "hand-only(unknown)", "no_idx", "no_commit", "word=", repr(events["word"]))
             self.last_hand_time = ts
-            self._votes = {}
+            self._wins.clear()
             self._last_idx = None
             return events
         else:
@@ -844,14 +851,14 @@ class SignSequencer:
             self.word.pop()
         self._committed_idx = None
         self._last_idx = None
-        self._votes = {}
+        self._wins.clear()
 
     def clear(self):
         """تحكم يدوي: مسح كل الكلمة الحية (فوري، بلا انتظار صمت)."""
         self.word = []
         self._committed_idx = None
         self._last_idx = None
-        self._votes = {}
+        self._wins.clear()
 
     def finalize_now(self):
         """تحكم يدوي: يغلق الكلمة الحالية ويصفّر المخزن — يعيدها نصاً أو None (فورية، بلا صمت)."""
@@ -871,7 +878,7 @@ class SignSequencer:
         self.word.append(idx)
         self._committed_idx = idx
         self._last_idx = idx
-        self._votes = {}
+        self._wins.clear()
         events["committed"] = (idx, CLASS_SYMS[idx], conf or self._last_conf)
         events["word"] = "".join(CLASS_SYMS[i] for i in self.word)
         _trace("force_commit", "idx=", idx, "conf=", f"{conf:.4f}", "word=", repr(events["word"]),
@@ -956,8 +963,10 @@ class LivePipeline:
     """M4+M5+M6 (+M7 عبر correct_word) في نقاط جاهزة للواجهة. process_frame محسوب مرة/إطار."""
 
     def __init__(self, conf_threshold=CONF_THRESHOLD, debounce=DEBOUNCE_FRAMES,
-                 silence_seconds=SILENCE_SECONDS, auto_correct=True, enable_profile=True):
-        self.seq = SignSequencer(conf_threshold, debounce, silence_seconds)
+                 silence_seconds=SILENCE_SECONDS, auto_correct=True, enable_profile=True,
+                 vote_window=VOTE_WINDOW, vote_majority=VOTE_MAJORITY):
+        self.seq = SignSequencer(conf_threshold, debounce, silence_seconds,
+                                 vote_window=vote_window, vote_majority=vote_majority)
         self.t0 = time.monotonic()
         self.auto_correct = auto_correct
         self._profiler = FrameProfiler(tag="ar") if enable_profile else None
@@ -1110,6 +1119,38 @@ def run_selftest() -> int:
     raw = seq4.finalize_now()                 # إغلاق يدوي فوري بلا صمت
     check("seq.finalize_now", raw == CLASS_SYMS[2] and seq4.word == [])
     check("seq.finalize_now.empty", seq4.finalize_now() is None)
+
+    # ---- P4: استقرار التنبؤ بأغلبية نافذة انزلاقية (5 من آخر 7) + منع الالتزام تحت العتبة ----
+    s5 = SignSequencer(conf_threshold=0.9, debounce=5, silence_seconds=1.0,
+                       vote_window=7, vote_majority=5)
+    ev = None
+    for cc, i in [(0.95, 2), (0.95, 2), (0.95, 3), (0.95, 2), (0.95, 2), (0.95, 3)]:
+        ev = s5.feed(True, i, cc, ts=0.1)
+    check("p4.majority.no_commit_4of6", ev["committed"] is None)      # 4 سين من 6 < 5
+    ev = s5.feed(True, 2, 0.95, ts=0.1)
+    check("p4.majority.commit_5of7", ev["committed"] == (2, CLASS_SYMS[2], 0.95)
+          and ev["word"] == CLASS_SYMS[2])                             # 5 سين من آخر 7 رغم رمشة B
+    s6 = SignSequencer(conf_threshold=0.9, debounce=5, silence_seconds=1.0,
+                       vote_window=7, vote_majority=5)
+    ev = None
+    for cc, i in [(0.5, 2), (0.5, 2), (0.5, 2), (0.5, 2), (0.5, 2)]:
+        ev = s6.feed(True, i, cc, ts=0.1)
+    check("p4.threshold.no_commit_below", ev["committed"] is None)     # كلها دون العتبة → None في النافذة
+    s7 = SignSequencer(conf_threshold=0.9, debounce=5, silence_seconds=1.0,
+                       vote_window=7, vote_majority=5)
+    ev = None
+    for cc, i in [(0.95, 2), (0.95, 2), (0.95, 2), (0.5, 2), (0.95, 2)]:
+        ev = s7.feed(True, i, cc, ts=0.1)
+    check("p4.threshold.jitter_frame_mid", ev["committed"] is None)    # 4 أعلى العتبة فقط من 5 → لا التزام
+    ev = s7.feed(True, 2, 0.95, ts=0.1)
+    check("p4.threshold.commit_after_jitter", ev["committed"] is not None
+          and ev["committed"][1] == CLASS_SYMS[2])                     # 5 من آخر 7 رغم تعطيل إطار مؤقت
+    # بوّابة الثقة الصارمة: لا التزام تلقائي حتى لو اكتملت الأغلبية لكن لا إطار يتجاوز العتبة
+    s8 = SignSequencer(conf_threshold=0.9, debounce=2, silence_seconds=1.0,
+                       vote_window=2, vote_majority=2)
+    ev = s8.feed(True, 2, 0.5, ts=0.1)
+    check("p4.hard_gate.below_th_not_voted", ev["committed"] is None
+          and s8._wins.count(2) == 0)
 
     # ---- P3: كلمات منفصلة + جملة بمسافات (تصحيح Groq على الجملة كاملة — بلا مفتاح → raw) ----
     pl3 = LivePipeline(auto_correct=False)
