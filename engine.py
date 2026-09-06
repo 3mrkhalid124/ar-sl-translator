@@ -313,10 +313,12 @@ def train_cnn() -> None:
         model.train()
         total, correct, loss_sum = 0, 0, 0.0
         perm = torch.randperm(train_n)
+        ag_rng = np.random.default_rng(11 + ep)
         t0 = time.time()
         for i in range(0, train_n, BATCH_SIZE):
             ids = perm[i:i + BATCH_SIZE]
-            xb, yb = x_train[ids], y_train[ids]
+            xb = torch.from_numpy(_augment_batch(x_train[ids].numpy(), ag_rng)).float()
+            yb = y_train[ids]
             opt.zero_grad()
             out = model(xb)
             loss = crit(out, yb)
@@ -392,15 +394,60 @@ def _get_model():
     return model
 
 
-def classify(patch: np.ndarray):
-    """CNN inference: patch float32 (64,64) أو (64,64,1) في [0,1] → (class_idx, confidence)."""
+MARGIN_THRESHOLD = 0.05  # margin-check عام: فرق احتمال top1−top2 المقبول (يطابق EN)
+
+
+def _augment_batch(xb: np.ndarray, rng) -> np.ndarray:
+    """زيادة تدريب on-the-fly: قلب قطبية عشوائي + تدوير/إزاحة/مقياس + تبويض/تباين/ضباب.
+    الدليل (قياس offline): القطبية المعكوسة كانت acc 0.156/0.208 (عربي/إنجليزي) وperturbed 0.281
+    → يجب أن يتدرب النموذج على نفس الـ transforms بدل الاعتماد على هيئة واحدة."""
+    import cv2
+    cv2.setNumThreads(0)  # يمنع ذعرها خيوطه مع MKL أثناء التدريب (قياس الزمن: 0.06s/دفعة)
+    B = xb.shape[0]
+    out = np.empty_like(xb)
+    for i in range(B):
+        p = xb[i, 0]
+        if rng.random() < 0.5:
+            p = 1.0 - p
+        ang = (rng.random() * 2 - 1) * 12.0
+        sc = 0.9 + rng.random() * 0.2
+        M = cv2.getRotationMatrix2D((32, 32), ang, sc)
+        p = cv2.warpAffine(p, M, (64, 64), flags=cv2.INTER_LINEAR,
+                           borderMode=cv2.BORDER_CONSTANT)
+        p = p * (0.75 + rng.random() * 0.5)
+        p = p + (rng.random() * 2 - 1) * 0.12
+        if rng.random() < 0.5:
+            p = cv2.GaussianBlur(p, (0, 0), 0.4 + rng.random() * 0.8)
+        out[i, 0] = np.clip(p, 0, 1)
+    return out
+
+
+def _augment_train(x: np.ndarray, y: np.ndarray, rng):
+    """يطبق _augment_batch بأزواج (x,y) — يستخدمه train_cnn و train_en معاً."""
+    return _augment_batch(x, rng), y
+
+
+def classify_softmax(patch: np.ndarray):
+    """same as classify لكن يُرجع أيضاً (top1−top2) margin — يُستخدم للـ margin-check."""
     import torch
     p = patch if patch.ndim == 2 else patch[:, :, 0]
     x = torch.from_numpy(p.astype(np.float32)[None, None]).float()
     with torch.no_grad():
         probs = torch.softmax(_get_model()(x), dim=1)[0].numpy()
-    idx = int(probs.argmax())
-    return idx, float(probs[idx])
+    order = np.argsort(probs)[::-1]
+    idx = int(order[0])
+    return idx, float(probs[idx]), float(probs[idx] - probs[order[1]])
+
+
+def margin_accept(margin: float) -> bool:
+    """gate عام للعربي: يقبل فقط التصنيفات التي تفوق فيها top1 توب2 بـ >= MARGIN_THRESHOLD."""
+    return float(margin) >= MARGIN_THRESHOLD
+
+
+def classify(patch: np.ndarray):
+    """CNN inference: patch float32 (64,64) أو (64,64,1) في [0,1] → (class_idx, confidence)."""
+    idx, conf, _margin = classify_softmax(patch)
+    return idx, conf
 
 
 # ---------------------------------------------------------------- M4: كاميرا + يد
@@ -467,6 +514,17 @@ ENG_LABELS = [
 ]
 HAND_PAD = 1.4  # هامش حول كف اليد قبل التكبير — يقارب نسبة اليد لعين الصور التدريبية
 ARSL_GRAYSCALE_ON_BLACK = True  # صور ArASL غالباً يد بيضاء على خلفية سوداء
+_TRAIN_MEAN = 0.646  # وسطي السطوع لـ arasl.npz كاملاً (مرجع التوثيق — لا يُستخدم في التحويل الآن)
+_TRAIN_STD = 0.261
+
+
+def normalize_live(norm: np.ndarray) -> np.ndarray:
+    """مواءمة قطبية لقطة اليد الحية نحو مظهر التدريب (خلفية مشرقة) — IRON بلا إعادة سطوع.
+    الدليل (قياس): canonical الداكن mean<0.5 → flip → يعادل canonical الفاتح acc 0.6875/1.0 بدل 0.156/0.208
+    للعكس؛ وإعادة السطوع الإحصائي كان مدمراً (in-domain 0.966→0.777) فاستُبعدت بالقياس."""
+    if norm.mean() < 0.5:
+        norm = 1.0 - norm
+    return norm.astype(np.float32)
 
 
 def _get_hand_detector():
@@ -594,9 +652,7 @@ def crop_hand_patch(frame, landmarks, pad: float = HAND_PAD):
     gray = cv2.resize(cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY), (IMG_SIZE, IMG_SIZE),
                       interpolation=cv2.INTER_AREA)
     norm = gray.astype(np.float32) / 255.0
-    if ARSL_GRAYSCALE_ON_BLACK and norm.mean() > 0.5:
-        norm = 1.0 - norm
-    return norm, (x0, y0, x1, y1)
+    return normalize_live(norm), (x0, y0, x1, y1)
 
 
 def process_frame(frame, ts_ms: int, prof=None):
@@ -622,14 +678,16 @@ def process_frame(frame, ts_ms: int, prof=None):
         _profile_time(prof, "crop", _t0)
         if patch is not None:
             _t0 = time.perf_counter()
-            idx, conf = classify(patch)
+            idx, conf, margin = classify_softmax(patch)
             _profile_time(prof, "classify", _t0)
             _t0 = time.perf_counter()
             ok_geo = validate_geometry(landmarks, idx)
             _profile_time(prof, "geometry", _t0)
+            ok_mar = margin_accept(margin)
             _trace("raw_conf=", f"{conf:.4f}", "class=", CLASS_NAMES[idx] if 0 <= idx < len(CLASS_NAMES) else None,
-                   "geo=", "accept" if ok_geo else "REJECT")
-            if not ok_geo:
+                   "geo=", "accept" if ok_geo else "REJECT",
+                   "margin=", f"{margin:.4f}", "margin_ok=", ok_mar)
+            if not ok_geo or not ok_mar:
                 idx, conf = None, 0.0
                 result["unknown"] = True
             result.update(idx=idx, label=None if idx is None else CLASS_NAMES[idx],
@@ -894,6 +952,10 @@ def run_selftest() -> int:
 
     idx, conf = classify(images[0][:, :, 0])
     check("classify.smoke", 0 <= idx < EXPECTED_CLASSES and 0.0 <= conf <= 1.0)
+
+    check("ar.margin.gate", margin_accept(0.08) is True and margin_accept(0.01) is False)
+    check("crop.polarity.light", normalize_live(np.full((64, 64), 0.8, np.float32)).mean() > 0.5)
+    check("crop.polarity.dark", normalize_live(np.full((64, 64), 0.2, np.float32)).mean() > 0.5)
 
     try:
         import json as _j

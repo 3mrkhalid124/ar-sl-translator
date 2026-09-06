@@ -221,15 +221,18 @@ def train_en() -> None:
         model.train()
         total = correct = 0
         perm = torch.randperm(train_n)
+        ag_rng = np.random.default_rng(21 + ep)
         t0 = time.time()
         for i in range(0, train_n, BATCH_SIZE_EN):
             ids = perm[i:i + BATCH_SIZE_EN]
+            xb = torch.from_numpy(ar._augment_batch(x_train[ids].numpy(), ag_rng)).float()
+            yb = y_train[ids]
             opt.zero_grad()
-            out = model(x_train[ids])
-            loss = crit(out, y_train[ids])
+            out = model(xb)
+            loss = crit(out, yb)
             loss.backward()
             opt.step()
-            correct += (out.argmax(1) == y_train[ids]).sum().item()
+            correct += (out.argmax(1) == yb).sum().item()
             total += len(ids)
         train_acc = correct / total
 
@@ -516,6 +519,9 @@ def en_checks(check) -> None:
         check("en.data.shape", False)
         check("en.classify.smoke", False)
         check("en.margin.gate", False)
+
+    check("en.polarity.light", ar.normalize_live(np.full((64, 64), 0.8, np.float32)).mean() > 0.5)
+    check("en.polarity.dark", ar.normalize_live(np.full((64, 64), 0.2, np.float32)).mean() > 0.5)
 
     black = np.zeros((480, 640, 3), dtype=np.uint8)
     _, res = process_frame_en(black, 1)
