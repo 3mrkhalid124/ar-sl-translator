@@ -426,6 +426,15 @@ with tab_live:
             st.session_state[f"aud_{lang}"] = audio
             st.session_state[f"wav_{lang}"] = time.perf_counter()
 
+    def _speak_letter(idx):
+        """نطق فوري لاسم الحرف عند «تثبيت» — منفصل عن نطق الكلمة الكاملة عند الإغلاق."""
+        name = (engine_en.CLASS_EN_SYMS[idx] if (IS_EN and engine_en is not None)
+                else engine.CLASS_NAMES[idx])
+        aud = engine.synthesize_speech(name, lang="en" if IS_EN else "ar")
+        if aud:
+            audio_ph.audio(aud, format="audio/mp3", autoplay=True)
+            st.session_state[f"wav_{lang}"] = time.perf_counter()
+
     # P2: عمودان ثابتان على شاشة قياسية — شمال: كاميرا فقط (مقيدة الارتفاع)،
     # يمين: الحرف + شريط الثقة + صف أزرار (✓/␣/✕/🗑) + البلاطات + السجل — معاً بلا سكرول.
     cam_col, res_col = st.columns([3, 4])
@@ -470,6 +479,8 @@ with tab_live:
         cand = st.session_state.get(f"cand_{lang}")
         if pl is not None and cand and cand[0] is not None:
             ev = pl.seq.force_commit(cand[0], cand[1])
+            if ev["committed"] is not None:
+                _speak_letter(ev["committed"][0])
             if ev["finalized"]:
                 corr, aud = _correct_synth(ev["finalized"])
                 _on_finalized(ev["finalized"], corr, aud)
