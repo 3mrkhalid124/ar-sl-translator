@@ -781,12 +781,3 @@ with tab_wlive:
             "it for 1 s to start a new word.",
             "**كيف تعمل:** نظام ISLR إنجليزي مستقل — لاندماركات اليدين تُعاد عيناتها إلى نافذة 40 إطاراً "
             "ثابتة ويصنّفها LSTM. أبقِ يدك (~4 ثوانٍ) لتمتلئ النافذة، ثم فارق يد 1 ثانية لبدء كلمة جديدة."))
-
-st.markdown(tr(
-    "<div class='meta' style='margin-top:24px'>Arabic: val 95.18% · 32 ArASL signs · "
-    "English: val 100% · 24 ASL signs · Words (EN): held-out test 63.6% · 10 words — "
-    "local Streamlit interface (M3–M11 + P1 + EN + W)</div>",
-    "<div class='meta' style='margin-top:24px'>العربي: val 95.18% · 32 إشارة ArASL · "
-    "English: val 100% · 24 ASL signs · الكلمات (إنج): اختبار 63.6% · 10 كلمات — "
-    "واجهة محلية Streamlit (M3–M11 + P1 + EN + W)</div>"),
-    unsafe_allow_html=True)
