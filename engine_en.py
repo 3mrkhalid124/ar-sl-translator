@@ -84,8 +84,6 @@ KAGGLE_DATASET = "datamunge/sign-language-mnist"
 KAGGLE_TRAIN_REL = "sign_mnist_train/sign_mnist_train.csv"
 KAGGLE_TEST_REL = "sign_mnist_test/sign_mnist_test.csv"
 
-GITIGNORE_ENTRIES = ["asl_mnist.npz", "cnn_en.pt", "class_map_en.json", "dict_en/"]
-
 
 # ---------------------------------------------------------------- البيانات (Step 1)
 

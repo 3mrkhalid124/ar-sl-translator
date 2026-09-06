@@ -548,9 +548,6 @@ ENG_LABELS = [
     "Yaa-Ha", "Yaa", "Zayn",
 ]
 HAND_PAD = 1.4  # هامش حول كف اليد قبل التكبير — يقارب نسبة اليد لعين الصور التدريبية
-ARSL_GRAYSCALE_ON_BLACK = True  # صور ArASL غالباً يد بيضاء على خلفية سوداء
-_TRAIN_MEAN = 0.646  # وسطي السطوع لـ arasl.npz كاملاً (مرجع التوثيق — لا يُستخدم في التحويل الآن)
-_TRAIN_STD = 0.261
 
 
 def normalize_live(norm: np.ndarray) -> np.ndarray:
