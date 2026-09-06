@@ -23,128 +23,120 @@ st.set_page_config(page_title="Sign Language Translator", page_icon="\U0001F91F"
 
 CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700&display=swap');
-:root, .stApp { direction: rtl; }
-html, body, .stApp, [class*="css"] {
-  font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif;
-  background: #0e1117; color: #e8eaed;
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500&display=swap');
+:root {
+  --bg-page: #FAF9F6; --surface-card: #FFFFFF; --border: #E5E2D9;
+  --text-primary: #1A1A18; --text-secondary: #6B6960;
+  --accent: #D85A30;
+  --success-bg: #EAF3DE; --success-text: #3B6D11;
+  --warn-bg: #FBF3E0; --warn-text: #8A6D1E;
+  --danger-bg: #FCEBEB; --danger-text: #A32D2D;
 }
-h1, h2, h3 { color: #f5c518 !important; text-align: right; }
-.big-letter { font-size: 72px; font-weight: 700; color: #1db954; text-align: center; min-height: 78px; line-height: 78px; }
-.big-letter-unknown { font-size: 54px; font-weight: 700; color: #ff9f43; text-align: center; min-height: 78px; line-height: 78px; }
-.word-line { font-size: 30px; color: #ffffff; text-align: center; direction: rtl; }
-.word-line .raw { color: #9aa4b5; font-size: 22px; }
-.meta { color: #9aa4b5; text-align: center; min-height: 20px; }
+html, body, .stApp { background: var(--bg-page); color: var(--text-primary);
+  font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif; }
+h1, h2, h3 { color: var(--text-primary) !important; font-weight: 500; }
+.stMainBlockContainer { background: transparent; border-radius: 12px; padding: 14px 20px; }
 
-.dict-card {
-  background: linear-gradient(180deg, #1c2230, #161b25);
-  border: 2px solid #2a3040; border-radius: 14px;
-  padding: 10px; margin: 8px 0; text-align: center;
-  transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
-  cursor: default;
+/* مبدّل اللغة: مؤشرات التابل — المختار accent، غير المختار رمادي شفاف */
+.stRadio [role="radiogroup"] { gap: 8px; flex-wrap: wrap; }
+.stRadio [role="radiogroup"] label {
+  background: transparent; border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 20px; color: var(--text-secondary); font-weight: 400; cursor: pointer;
+  font-family: 'Cairo', sans-serif;
 }
-.dict-card:hover {
-  transform: translateY(-4px);
-  border-color: #f5c518;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, .5);
+.stRadio [role="radiogroup"] label:has(input:checked) {
+  border-color: var(--accent); color: var(--accent); font-weight: 500;
 }
-.dict-card img { border-radius: 10px; width: 100%; border: 2px solid #2a3040; }
-.dict-name { font-weight: 700; color: #f5c518; margin-top: 6px; font-size: 18px; }
-.dict-sym { color: #9aa4b5; font-size: 15px; }
-.cat-extended { border-color: #1d6f8f; }
-.cat-extended:hover { border-color: #38bdf8; box-shadow: 0 8px 20px rgba(56, 189, 248, .18); }
-.cat-fist { border-color: #9c4a1e; }
-.cat-fist:hover { border-color: #ff9f43; box-shadow: 0 8px 20px rgba(255, 159, 67, .18); }
-.cat-markab { border-color: #5b3fa8; }
-.cat-markab:hover { border-color: #a78bfa; box-shadow: 0 8px 20px rgba(167, 139, 250, .18); }
 
-.badge {
-  display: inline-block; font-size: 11px; font-weight: 700; border-radius: 999px;
-  padding: 2px 10px; margin: 2px; color: #0e1117; letter-spacing: .3px;
+/* أزرار: زر أساسي واحد accent فقط، الباقي أبيض/رمادي بحدود خفيفة */
+.stButton button {
+  background: var(--surface-card); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text-primary); font-family: 'Cairo', sans-serif; font-weight: 400;
 }
-.badge-extended { background: linear-gradient(135deg, #38bdf8, #22d3ee); }
-.badge-fist { background: linear-gradient(135deg, #f5c518, #ff9f43); }
-.badge-thumb { background: linear-gradient(135deg, #a78bfa, #7c3aed); color: #ffffff; }
-.badge-ai { background: linear-gradient(135deg, #2ec4b6, #1db954); }
-.badge-markab { background: linear-gradient(135deg, #a78bfa, #7c3aed); color: #ffffff; }
-.badge-index { background: #2a3040; color: #9aa4b5; }
-.badge-hand-ok { background: linear-gradient(135deg, #1db954, #2ec4b6); font-size: 14px; }
-.badge-hand-unknown { background: linear-gradient(135deg, #ff9f43, #f5c518); font-size: 14px; }
-.badge-hand-wait { background: #2a3040; color: #9aa4b5; font-size: 14px; }
+.stButton button[kind="primary"], .stButton button[data-testid="stBaseButton-primary"] {
+  background: var(--accent); border-color: var(--accent); color: #FFFFFF; font-weight: 500;
+}
 
-.conf-wrap { background: #2a3040; border-radius: 999px; height: 10px; width: 100%; margin: 8px auto 0; max-width: 340px; position: relative; }
-.conf-fill { height: 10px; border-radius: 999px; background: linear-gradient(90deg, #1db954, #f5c518); transition: width .12s ease-out, opacity .12s ease-out; }
-.conf-wrap::after { content: ""; position: absolute; left: 90%; top: -3px; bottom: -3px; width: 2px; background: rgba(255, 255, 255, .35); }
-.badge, .big-letter, .big-letter-unknown { transition: opacity .12s ease-out; }
-.meta { color: #9aa4b5; text-align: center; min-height: 20px; }
+/* تبويبات Streamlit: النشط = accent بخط سفلي */
+.stTabs [data-baseweb="tab-list"] { gap: 6px; }
+.stTabs [data-baseweb="tab"] {
+  background: transparent; color: var(--text-secondary); font-weight: 400;
+  border-radius: 8px; padding: 8px 16px; font-family: 'Cairo', sans-serif;
+}
+.stTabs [aria-selected="true"] { color: var(--accent) !important; font-weight: 500;
+  border-bottom: 2px solid var(--accent) !important; }
+.stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] { display: none; }
 
-/* ---- البند 1: أنيميشن تكوين الحرف/الكلمة (بلاطات + كشف Groq + فقاعات) ---- */
-@keyframes pop-in { 0% { opacity: 0; transform: scale(.78) translateY(6px); } 100% { opacity: 1; transform: scale(1) translateY(0); } }
-@keyframes tile-in { 0% { opacity: 0; transform: translateY(10px) scale(.7) rotate(-2deg); } 70% { transform: translateY(-2px) scale(1.06); } 100% { opacity: 1; transform: translateY(0) scale(1) rotate(0); } }
-@keyframes bubble-in { 0% { opacity: 0; transform: translateY(14px) scale(.92); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+/* كروت موحّدة: سطح أبيض + حدود 1px + r=12 */
+.card { background: var(--surface-card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+[data-testid="stVerticalBlockBorderWrapper"] { border: 1px solid var(--border) !important; border-radius: 12px !important; }
 
+/* شارات الحالة: ألوان وظيفية فقط (أخضر/كهرماني/أحمر) */
+.badge { display: inline-block; font-size: 12px; font-weight: 500; border-radius: 8px;
+  padding: 3px 12px; border: 1px solid transparent; }
+.badge-hand-ok { background: var(--success-bg); color: var(--success-text); border-color: var(--success-text); }
+.badge-ai { background: var(--success-bg); color: var(--success-text); border-color: var(--success-text); }
+.badge-hand-unknown { background: var(--warn-bg); color: var(--warn-text); border-color: var(--warn-text); }
+.badge-hand-wait, .badge-index { background: transparent; color: var(--text-secondary); border-color: var(--border); }
+
+/* الحرف الكبير — نص أساسي، غير واضح = كهرماني */
 .big-slot { min-height: 86px; text-align: center; }
-.stImage img { max-height: 380px; width: auto !important; margin: 0 auto; display: block; object-fit: contain; }
-.big-letter, .big-letter-unknown { animation: pop-in .2s ease 1; }
-.big-letter-unknown { color: #ff9f43; }
+.big-letter { font-size: 72px; font-weight: 500; color: var(--text-primary); text-align: center; min-height: 78px; line-height: 78px; }
+.big-letter-unknown { font-size: 54px; font-weight: 500; color: var(--warn-text); text-align: center; min-height: 78px; line-height: 78px; }
+.big-letter-weak { font-size: 54px; font-weight: 400; color: var(--text-secondary); text-align: center; min-height: 78px; line-height: 78px; }
 
-/* تراكم الكلمة: 40 خانة ثابتة — البلاطة تُملأ عند كل حرف مُلتزم (transition على نفس الخانة) */
-.word-stage { display: flex; flex-direction: column; align-items: center; gap: 4px; min-height: 74px; margin-top: 10px; }
-.tilerow { display: flex; gap: 4px; min-height: 56px; align-items: center; justify-content: center; }
-.tile { width: 40px; height: 54px; flex: none; display: inline-flex; align-items: center; justify-content: center;
-        border-radius: 9px; border: 1.5px solid #1db954; background: linear-gradient(160deg, #123524, #0e2016);
-        color: #e8f7ee; font-weight: 700; font-size: 27px; box-shadow: 0 4px 12px rgba(29, 185, 84, .22);
-        animation: tile-in .22s ease 1; }
+/* شريط الثقة: لون وظيفي حسب القيمة (أحمر <0.5، كهرماني 0.5–0.85، أخضر >0.85) */
+.conf-wrap { background: var(--border); border-radius: 8px; height: 8px; width: 100%; margin: 8px auto 0; max-width: 340px; }
+.conf-fill { height: 8px; border-radius: 8px; transition: width .12s ease-out; }
+
+/* بلاطات الكلمة: مربعات 36×36 بحدود، لا نص عادي */
+.word-stage { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-top: 4px; }
+.tilerow { display: flex; gap: 8px; min-height: 36px; align-items: center; justify-content: center; flex-wrap: wrap; }
+.tile { width: 36px; height: 36px; flex: none; display: inline-flex; align-items: center; justify-content: center;
+        border: 1px solid var(--border); background: var(--surface-card); color: var(--text-primary);
+        font-weight: 500; font-size: 20px; border-radius: 8px; }
 .tile-spacer { width: 0; flex: none; }
-.tile-count { color: #5f6b7d; font-size: 12px; }
+.tile-count { color: var(--text-secondary); font-size: 12px; }
 
-/* كشف فاعلية AI عند إغلاق الكلمة: يخفت الخام ويدخل المصحح بصورة أكبر */
-.reveal-stage { display: flex; flex-direction: column; align-items: center; gap: 4px; min-height: 66px; margin-top: 8px; }
-.reveal-stage .rev-raw { display: flex; gap: 3px; opacity: 1; transition: opacity .3s ease-out; }
-.reveal-stage .rev-raw .tile { width: 26px; height: 34px; font-size: 18px; border-color: #9aa4b5; box-shadow: none;
-                               background: linear-gradient(160deg, #1c2230, #141922); }
-.reveal-stage .rev-cor { opacity: 0; transform: translateY(8px) scale(.9); transition: opacity .3s ease-out, transform .3s ease-out;
-                          font-size: 32px; font-weight: 700; color: #f5c518; }
-.reveal-stage.done .rev-raw { opacity: 0; }
-.reveal-stage.done .rev-cor { opacity: 1; transform: translateY(0) scale(1); }
-
-/* سجل الجمل كفقاعات شات */
-.bub-wrap { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
-.bub { align-self: flex-start; max-width: 82%; padding: 8px 14px; border-radius: 14px 14px 14px 4px;
-       background: linear-gradient(160deg, #1c2230, #151a25); border: 1px solid #2a3040; font-size: 21px;
-       color: #e8eaed; box-shadow: 0 3px 10px rgba(0, 0, 0, .35); animation: bubble-in .28s ease 1; }
-.bub-ai { align-self: flex-end; border-radius: 14px 14px 4px 14px; background: linear-gradient(160deg, #332d14, #221b08);
-          border-color: #f5c518; color: #ffedb0; }
-.bub .raw-mini { display: block; font-size: 13px; color: #9aa4b5; padding-bottom: 2px; }
-.bub .badge { vertical-align: middle; }
+/* فقاعات كشف AI والتراكم */
+.reveal-stage .rev-raw { display: flex; gap: 3px; }
+.reveal-stage .rev-raw .tile { width: 26px; height: 34px; font-size: 18px; border-color: var(--border); }
+.rev-cor { font-size: 30px; font-weight: 500; color: var(--text-primary); text-align: center; }
+.bub { align-self: flex-start; max-width: 82%; padding: 10px 14px; border-radius: 12px;
+       background: var(--surface-card); border: 1px solid var(--border); font-size: 20px; color: var(--text-primary); }
+.bub-ai { align-self: flex-end; background: var(--success-bg); border-color: var(--success-text); }
+.bub .raw-mini { display: block; font-size: 12px; color: var(--text-secondary); padding-bottom: 2px; }
 .bub-slot { display: none; }
+.meta { color: var(--text-secondary); text-align: center; }
 
-/* ---- البند 2: مؤشرات أوضح — لون الثقة حسب قيمتها، موجة صوت CSS، fade بين اللغتين ---- */
-@keyframes page-fade { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes wave { 0%, 100% { transform: scaleY(.35); } 50% { transform: scaleY(1); } }
-.stMainBlockContainer { animation: page-fade .3s ease 1; }
+/* القاموس: كروت بيضاء نظيفة — صورة + اسم + فئة بصرية واحدة، بلا badges نصية */
+.dict-card { background: var(--surface-card); border: 1px solid var(--border); border-radius: 12px;
+  padding: 12px 14px; margin: 8px 0; text-align: center; }
+.dict-card img { border-radius: 8px; width: 100%; border: 1px solid var(--border);
+  object-fit: contain; min-height: 92px; }
+.dict-name { font-weight: 500; color: var(--text-primary); margin-top: 6px; font-size: 18px; }
+.dict-cat { color: var(--text-secondary); font-size: 12px; margin-top: 4px; }
+.dict-sym { color: var(--text-secondary); font-size: 14px; }
+
+.stImage img { max-height: 380px; width: auto !important; margin: 0 auto; display: block; object-fit: contain; }
+
+/* أزرار الحذف داخل كارت البلاطات فقط = خطر أحمر (بلا accent) */
+[data-testid="stVerticalBlockBorderWrapper"] button[data-testid="stBaseButton-secondary"] {
+  background: var(--danger-bg); border-color: var(--danger-text); color: var(--danger-text); font-weight: 500;
+}
+
+/* موجة الصوت أثناء التشغيل */
+@keyframes wave { 0%,100% { transform: scaleY(.35); } 50% { transform: scaleY(1); } }
 .wave-row { display: flex; gap: 4px; align-items: flex-end; justify-content: center; height: 26px; margin: 6px 0 2px; }
-.wave-row .bar { width: 5px; height: 24px; border-radius: 3px; background: #2ec4b6; transform-origin: bottom;
+.wave-row .bar { width: 5px; height: 24px; border-radius: 3px; background: var(--accent); transform-origin: bottom;
                 animation: wave 1s ease-in-out infinite; animation-play-state: paused; opacity: .85; }
 .wave-row.playing .bar { animation-play-state: running; }
 
-/* ---- البند 3: خلفية متدرجة + نفس الشكر (pattern) حسب اللغة + skeleton القاموس ---- */
-html, body, .stApp { background-color: #0d1117; }
-body.stApp, .stMain, .stApp {
-  background-image:
-    radial-gradient(1100px 750px at 88% -8%, rgba(245, 197, 24, .08), transparent 62%),
-    radial-gradient(1000px 700px at -8% 112%, rgba(29, 185, 84, .07), transparent 60%);
-  background-attachment: fixed;
-}
-.stMainBlockContainer { background: rgba(13, 17, 23, .62); border-radius: 18px; padding: 14px 20px; }
-@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
-@keyframes card-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-.dict-card { animation: card-in .3s ease 1; }
-.dict-card img {
-  min-height: 92px; object-fit: contain;
-  background: linear-gradient(110deg, #1a2030 25%, #232b3d 45%, #1a2030 65%);
-  background-size: 200% 100%; animation: shimmer 1.3s infinite;
-}
+/* تفاصيل نصية متناسقة مع السمة */
+.stMarkdown, .stCaption, .stText { font-family: 'Cairo', sans-serif; color: var(--text-primary); }
+.stCheckbox label { color: var(--text-primary); }
+
+/* حذف كل التدرجات والظلال مضمون أعلى: لا raw-gradient / لا box-shadow في الملف */
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -187,18 +179,15 @@ _HIST_SLOTS = 8
 
 
 def _conf_bar(pct):
-    """شريط الثقة: تدرّج لوني حي — أحمر تحت العتبة، أصفر قريب، أخضر/سماوي فوقها (CSS inline فقط)."""
-    TH = int(round(engine.CONF_THRESHOLD * 100))
-    if pct >= TH:
-        k = min(1.0, (pct - TH) / max(1, 100 - TH))
-        col = f"rgb({29 + round(82 * k)},{185 + round(20 * k)},{84 + round(124 * k)})"
-    elif pct >= 60:
-        k = (pct - 60) / max(1, TH - 60)
-        col = f"rgb({round(229 - 20 * k)},{round(82 + 57 * k)},{round(80 + 117 * k)})"
+    """شريط الثقة في كارت الكاميرا — لون وظيفي فقط حسب القيمة (أحمر <0.5، كهرماني 0.5–0.85، أخضر >0.85)."""
+    if pct < 50:
+        col = "var(--danger-text)"
+    elif pct <= 85:
+        col = "var(--warn-text)"
     else:
-        col = "rgb(229,82,80)"
+        col = "var(--success-text)"
     return (f"<div class='conf-wrap'><div class='conf-fill' "
-            f"style='width:{pct}%; background:{col}; box-shadow:0 0 12px {col}66'></div></div>")
+            f"style='width:{pct}%; background:{col}'></div></div>")
 
 
 def _wave_md():
@@ -257,25 +246,6 @@ def _history_md(items, lang):
     return "<div class='bub-wrap'>" + "".join(out) + "</div>"
 
 
-# ---- بند 3: خلفية وهوية بصرية — نقش هندسي إسلامي خفيف (عربي) مقابل شبكة بسيطة (إنجليزي) ----
-def _svg_pattern(simple):
-    if simple:
-        svg = ("<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'>"
-               "<defs><pattern id='p' width='120' height='120' patternUnits='userSpaceOnUse'>"
-               "<g fill='none' stroke='rgba(255,255,255,0.05)' stroke-width='1'>"
-               "<path d='M0 60h120M60 0v120'/><circle cx='60' cy='60' r='4' fill='rgba(255,255,255,0.08)'/>"
-               "</g></pattern></defs><rect width='100%25' height='100%25' fill='url(%23p)'/></svg>")
-    else:
-        svg = ("<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'>"
-               "<defs><pattern id='p' width='120' height='120' patternUnits='userSpaceOnUse'>"
-               "<g fill='none' stroke='rgba(245,197,24,0.05)' stroke-width='1'>"
-               "<rect x='36' y='36' width='48' height='48'/>"
-               "<polygon points='60,10 70,50 110,60 70,70 60,110 50,70 10,60 50,50'/>"
-               "<circle cx='60' cy='60' r='10'/>"
-               "</g></pattern></defs><rect width='100%25' height='100%25' fill='url(%23p)'/></svg>")
-    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
-
-
 # --- مبدّل اللغة: يحوّل النموذج النشط/خريطة الفئات/الاتجاه/اللغة الصوتية/صور القاموس — بلا لمس العربي
 lang = st.radio("اللغة / Language", ["عربي", "English"], horizontal=True, key="lang_toggle")
 IS_EN = lang == "English"
@@ -289,16 +259,10 @@ def tr(en, ar_):
 
 
 # خلفية لغة-مخصوصة + توجيه خالص (LTR في الإنجليزي، RTL في العربي — بلا مزيج)
-_WALL = _svg_pattern(IS_EN)
 _DIRCSS = (":root, .stApp { direction: rtl; } h1, h2, h3 { text-align: right; }"
            if not IS_EN else
            ":root, .stApp { direction: ltr; } h1, h2, h3 { text-align: left; }")
-st.markdown(
-    f"<style>{_DIRCSS} html, body, .stApp {{ background-image: url('{_WALL}'), "
-    "radial-gradient(1100px 750px at 88% -8%, rgba(245,197,24,.08), transparent 62%), "
-    "radial-gradient(1000px 700px at -8% 112%, rgba(29,185,84,.07), transparent 60%); "
-    "background-attachment: fixed; background-size: auto, auto, auto; }}</style>",
-    unsafe_allow_html=True)
+st.markdown(f"<style>{_DIRCSS}</style>", unsafe_allow_html=True)
 
 tab_live, tab_dict, tab_words = (st.tabs(["\U0001F3A5 Live Translation", "\U0001F4D6 Dictionary",
                                            "\U0001F4AC Common Words"])
@@ -366,33 +330,47 @@ with tab_live:
     if st.session_state.get("dbg_show"):
         _dl = "English" if IS_EN else "عربي"
         st.markdown(
-            f"<div class='meta' style='text-align:center; color:#9aa4b5'>"
+            f"<div class='meta' style='text-align:center'>"
             f"🔧 {tr('language', 'اللغة')}: <b>{_dl}</b> · "
             f"{tr('checkpoint', 'النموذج')}: <b>{_PCMODEL.name}</b></div>",
             unsafe_allow_html=True)
 
-    wb = st.columns([1, 1, 3])
-    with wb[0]:
-        if st.button(tr("✕ Delete last letter", "✕ حذف آخر حرف"), width="stretch"):
-            pl = st.session_state.get(pkey)
-            if pl is not None and getattr(pl, "seq", None) is not None:
-                pl.seq.backspace()
-            st.session_state.pop(f"rev_{lang}", None)
-    with wb[1]:
-        if st.button(tr("🗑 Clear all", "🗑 مسح الكل"), width="stretch"):
-            pl = st.session_state.get(pkey)
-            if pl is not None and getattr(pl, "seq", None) is not None:
-                pl.seq.clear()
-            st.session_state.pop(f"rev_{lang}", None)
+    def _back_last():
+        pl = st.session_state.get(pkey)
+        if pl is not None and getattr(pl, "seq", None) is not None:
+            pl.seq.backspace()
+        st.session_state.pop(f"rev_{lang}", None)
+
+    def _clear_word():
+        pl = st.session_state.get(pkey)
+        if pl is not None and getattr(pl, "seq", None) is not None:
+            pl.seq.clear()
+        st.session_state.pop(f"rev_{lang}", None)
 
     cam_col, res_col = st.columns([3, 4])
     with cam_col:
-        frame_ph = st.empty()
-        hand_ph = st.empty()
+        cam_card = st.container(border=True)
+        with cam_card:
+            frame_ph = st.empty()
+            hand_ph = st.empty()
+            conf_ph = st.empty()
+        tt_card = st.container(border=True)
+        with tt_card:
+            tcols = st.columns([1, 4, 1])
+            with tcols[0]:
+                st.markdown("<div class='meta' style='margin-top:6px'>" +
+                            tr("Your letters", "حروفك المتراكمة") + "</div>", unsafe_allow_html=True)
+            tiles_ph = tcols[1].empty()
+            with tcols[2]:
+                if st.button(tr("✕ Delete last", "✕ حذف آخر حرف"),
+                             key=f"wb_back_{lang}", width="stretch"):
+                    _back_last()
+                if st.button(tr("🗑 Clear", "🗑 مسح الكل"),
+                             key=f"wb_clr_{lang}", width="stretch"):
+                    _clear_word()
     with res_col:
         letter_ph = st.empty()
         reveal_ph = st.empty()
-        tiles_ph = st.empty()
         status_ph = st.empty()
         audio_ph = st.empty()
         wave_ph = st.empty()
@@ -434,24 +412,28 @@ with tab_live:
         hand_ph.markdown(f"<div style='text-align:center; margin-bottom:10px'>{hand_md}</div>",
                          unsafe_allow_html=True)
 
+        if out["hand"]:
+            conf_ph.markdown(_conf_bar(int(out["conf"] * 100)), unsafe_allow_html=True)
+        else:
+            conf_ph.markdown("")
+
         if out["hand"] and out["idx"] is not None and not out.get("unknown"):
-            pct = int(out["conf"] * 100)
+            below = out["conf"] < engine.CONF_THRESHOLD
             if engine._TRACE:
                 print("[TRACE UI] big-slot shows candidate", repr(out["label"]),
                       f"conf={out['conf']:.4f}", "th=", engine.CONF_THRESHOLD,
-                      "BELOW_TH_DISPLAYED=", out["conf"] < engine.CONF_THRESHOLD, flush=True)
+                      "BELOW_TH_DISPLAYED=", below, flush=True)
+            cls = "big-letter-weak" if below else "big-letter"
             if IS_EN:
-                letter_ph.markdown(
-                    f"<div class='big-slot'><div class='big-letter'>{out['label']}</div>"
-                    f"<div class='meta'>confidence {out['conf']:.2f}</div>"
-                    f"{_conf_bar(pct)}</div>",
-                    unsafe_allow_html=True)
+                meta = (f"proposed · confidence {out['conf']:.2f}" if below
+                        else f"confidence {out['conf']:.2f}")
             else:
-                letter_ph.markdown(
-                    f"<div class='big-slot'><div class='big-letter'>{out['label']}</div>"
-                    f"<div class='meta'>{out['label_en']} — الثقة {out['conf']:.2f}</div>"
-                    f"{_conf_bar(pct)}</div>",
-                    unsafe_allow_html=True)
+                meta = (f"مقترح · الثقة {out['conf']:.2f}" if below
+                        else f"{out['label_en']} — الثقة {out['conf']:.2f}")
+            letter_ph.markdown(
+                f"<div class='big-slot'><div class='{cls}'>{out['label']}</div>"
+                f"<div class='meta'>{meta}</div></div>",
+                unsafe_allow_html=True)
         elif out.get("unknown"):
             letter_ph.markdown(
                 ("<div class='big-slot'><div class='big-letter-unknown'>Unclear</div>"
@@ -541,14 +523,11 @@ with tab_dict:
                                       "name": engine_en.CLASS_EN_SYMS[i]})
 
         def _dict_cat(_i):
-            return "markab"
+            return ""
 
         def _dict_uri(i):
             p = engine_en.DICT_EN_DIR / f"class_{i:02d}.png"
             return "data:image/png;base64," + base64.b64encode(p.read_bytes()).decode() if p.exists() else None
-
-        def _dict_badge(i, cat):
-            return f"<span class='badge badge-{cat}'>EN</span>"
     else:
         n = engine.EXPECTED_CLASSES
         cmap_ar = _load_class_map()
@@ -562,19 +541,18 @@ with tab_dict:
         def _dict_uri(i):
             return _img_uri(i)
 
-        def _dict_badge(i, cat):
-            return f"<span class='badge badge-{cat}'>{tr(_VIS_LABEL_EN[cat], _VIS_LABEL[cat])}</span>"
-
     cols = st.columns(4)
     for i in range(n):
         info = _dict_info(i)
         cat = _dict_cat(i)
         uri = _dict_uri(i)
-        card = f"<div class='dict-card cat-{cat}' style='margin-top:14px'>"
+        card = f"<div class='dict-card'>"
         if uri:
             card += f"<img src='{uri}' alt='{info['name']}' loading='lazy'/>"
-        card += f"<div style='margin-top:8px'>{_dict_badge(i, cat)}</div>"
-        card += f"<div class='dict-name'>{info['name']}</div></div>"
+        card += f"<div class='dict-name'>{info['name']}</div>"
+        if cat:
+            card += f"<div class='dict-cat'>{tr(_VIS_LABEL_EN[cat], _VIS_LABEL[cat])}</div>"
+        card += "</div>"
         with cols[i % 4]:
             st.markdown(card, unsafe_allow_html=True)
 
