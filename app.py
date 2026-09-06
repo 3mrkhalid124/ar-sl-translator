@@ -34,7 +34,13 @@ CSS = """
 html, body, .stApp { background: var(--bg-page); color: var(--text-primary);
   font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif; }
 h1, h2, h3 { color: var(--text-primary) !important; font-weight: 500; }
-.stMainBlockContainer { background: transparent; border-radius: 12px; padding: 14px 20px; }
+h1 { font-size: 24px !important; line-height: 1.2; margin: 0 0 4px !important; }
+.stMainBlockContainer { background: transparent; border-radius: 12px; padding: 8px 16px; }
+[data-testid="stCaptionContainer"] { margin: 0 0 2px !important; }
+[data-testid="stCaptionContainer"] p { font-size: 13px; margin: 0 !important; }
+[data-testid="stRadio"] { margin-bottom: 2px !important; }
+[data-testid="stTabs"] { margin-top: 4px !important; }
+[data-testid="stExpander"] summary { padding: 4px 0 !important; }
 
 /* مبدّل اللغة: مؤشرات التابل — المختار accent، غير المختار رمادي شفاف */
 .stRadio [role="radiogroup"] { gap: 8px; flex-wrap: wrap; }
@@ -120,8 +126,10 @@ h1, h2, h3 { color: var(--text-primary) !important; font-weight: 500; }
 .conf-fill { height: 8px; border-radius: 8px; transition: width .12s ease-out; }
 
 /* بلاطات الكلمة: مربعات 36×36 بحدود، لا نص عادي */
-.word-stage { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-top: 4px; }
-.tilerow { display: flex; gap: 8px; min-height: 36px; align-items: center; justify-content: center; flex-wrap: wrap; }
+.word-stage { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-top: 4px;
+  max-height: 64px; overflow: hidden; }
+.tilerow { display: flex; gap: 8px; min-height: 36px; align-items: center; justify-content: center;
+  flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; max-height: 40px; }
 .tile { width: 36px; height: 36px; flex: none; display: inline-flex; align-items: center; justify-content: center;
         border: 1px solid var(--border); background: var(--surface-card); color: var(--text-primary);
         font-weight: 500; font-size: 20px; border-radius: 8px; }
@@ -129,13 +137,14 @@ h1, h2, h3 { color: var(--text-primary) !important; font-weight: 500; }
 .tile-count { color: var(--text-secondary); font-size: 12px; }
 
 /* صف جملة الكلمات المنفصلة (P3): شرائح كلمات + مسافات واضحة عند العرض */
-.sent-wrap { margin-top: 8px; }
+.sent-wrap { margin-top: 8px; max-height: 50px; overflow: hidden; }
 .sent-row { display: flex; gap: 6px; align-items: center; justify-content: center; flex-wrap: wrap; }
 .sent-row .wordchip { background: var(--surface-card); border: 1px solid var(--border); border-radius: 8px;
         padding: 2px 12px; font-size: 20px; font-weight: 500; color: var(--text-primary); }
 .sent-sep { color: var(--text-secondary); }
 
 /* فقاعات كشف AI والتراكم */
+.reveal-stage { overflow: hidden; max-height: 72px; }
 .reveal-stage .rev-raw { display: flex; gap: 3px; }
 .reveal-stage .rev-raw .tile { width: 26px; height: 34px; font-size: 18px; border-color: var(--border); }
 .rev-cor { font-size: 30px; font-weight: 500; color: var(--text-primary); text-align: center; }
@@ -144,6 +153,7 @@ h1, h2, h3 { color: var(--text-primary) !important; font-weight: 500; }
 .bub-ai { align-self: flex-end; background: var(--success-bg); border-color: var(--success-text); }
 .bub .raw-mini { display: block; font-size: 12px; color: var(--text-secondary); padding-bottom: 2px; }
 .bub-slot { display: none; }
+.bub-wrap { max-height: 72px; overflow-y: auto; overflow-x: hidden; padding-right: 4px; scrollbar-width: thin; }
 .meta { color: var(--text-secondary); text-align: center; }
 
 /* القاموس: كروت بيضاء نظيفة — صورة + اسم + فئة بصرية واحدة، بلا badges نصية */
@@ -154,7 +164,8 @@ h1, h2, h3 { color: var(--text-primary) !important; font-weight: 500; }
 .dict-name { font-weight: 500; color: var(--text-primary); margin-top: 6px; font-size: 18px; }
 .dict-cat { color: var(--text-secondary); font-size: 12px; margin-top: 4px; }
 
-.stImage img { max-height: 380px; width: auto !important; margin: 0 auto; display: block; object-fit: contain; }
+.stImage img { max-height: 320px; width: auto !important; margin: 0 auto; display: block; object-fit: contain; }
+.stImageContainer { text-align: center; }
 
 /* أزرار الحذف داخل كارت البلاطات فقط = خطر أحمر (بلا accent) */
 [data-testid="stVerticalBlockBorderWrapper"] button[data-testid="stBaseButton-secondary"] {
@@ -376,21 +387,25 @@ with tab_live:
 
     col_ctrl = st.columns([1, 3])[0]
     with col_ctrl:
-        if st.button(tr("Start camera", "بدء التقاط الكاميرا"), type="primary", width="stretch",
-                     key="btn_start_live"):
-            if st.session_state.cap is None or not st.session_state.cap.isOpened():
-                cap = cv2.VideoCapture(0)
-                if not cap.isOpened():
-                    st.error(tr("Could not open camera (source=0)", "تعذر فتح الكاميرا (source=0)"))
-                else:
-                    st.session_state.cap = cap
-            st.session_state.live = True
-        if st.button(tr("Stop", "إيقاف"), width="stretch", key="btn_stop_live"):
-            st.session_state.live = False
+        cb1, cb2, cb3 = st.columns([2, 2, 3])
+        with cb1:
+            if st.button(tr("Start camera", "بدء التقاط الكاميرا"), type="primary", width="stretch",
+                         key="btn_start_live"):
+                if st.session_state.cap is None or not st.session_state.cap.isOpened():
+                    cap = cv2.VideoCapture(0)
+                    if not cap.isOpened():
+                        st.error(tr("Could not open camera (source=0)", "تعذر فتح الكاميرا (source=0)"))
+                    else:
+                        st.session_state.cap = cap
+                st.session_state.live = True
+        with cb2:
+            if st.button(tr("Stop", "إيقاف"), width="stretch", key="btn_stop_live"):
+                st.session_state.live = False
+        with cb3:
+            st.checkbox(tr("🔧 Debug diagnostics", "🔧 معلومات تشخيصية"), key="dbg_show")
         if has_key is False:
             st.info(tr("Set GROQ_API_KEY in .env to auto-correct text",
                        "أضف مفتاح Groq في .env ليُصحَّح النص تلقائياً"), icon="\U0001F511")
-        st.checkbox(tr("🔧 Debug diagnostics", "🔧 معلومات تشخيصية"), key="dbg_show")
 
     if st.session_state.get("dbg_show"):
         _dl = "English" if IS_EN else "عربي"
@@ -432,41 +447,41 @@ with tab_live:
             st.session_state[f"aud_{lang}"] = audio
             st.session_state[f"wav_{lang}"] = time.perf_counter()
 
+    # P2: عمودان ثابتان على شاشة قياسية — شمال: كاميرا فقط (مقيدة الارتفاع)،
+    # يمين: الحرف + شريط الثقة + صف أزرار (✓/␣/✕/🗑) + البلاطات + السجل — معاً بلا سكرول.
     cam_col, res_col = st.columns([3, 4])
     with cam_col:
         cam_card = st.container(border=True)
         with cam_card:
             frame_ph = st.empty()
             hand_ph = st.empty()
-            conf_ph = st.empty()
-        tt_card = st.container(border=True)
-        with tt_card:
-            tcols = st.columns([1, 4, 1])
-            with tcols[0]:
-                st.markdown("<div class='meta' style='margin-top:6px'>" +
-                            tr("Your letters", "حروفك المتراكمة") + "</div>", unsafe_allow_html=True)
-            tiles_ph = tcols[1].empty()
-            with tcols[2]:
-                if st.button(tr("✓ Pin letter", "✓ تثبيت الحرف"),
-                             key=f"btn_ok_commit_{lang}", width="stretch"):
-                    st.session_state[f"commit_{lang}"] = True
-                if st.button(tr("␣ New word", "␣ كلمة جديدة"),
-                             key=f"btn_new_word_{lang}", width="stretch"):
-                    st.session_state[f"new_word_{lang}"] = True
-                if st.button(tr("✕ Delete last", "✕ حذف آخر حرف"),
-                             key=f"wb_back_{lang}", width="stretch"):
-                    _back_last()
-                if st.button(tr("🗑 Clear", "🗑 مسح الكل"),
-                             key=f"wb_clr_{lang}", width="stretch"):
-                    _clear_word()
     with res_col:
         letter_ph = st.empty()
-        reveal_ph = st.empty()
+        conf_ph = st.empty()
+        act_row = st.columns(4)
+        with act_row[0]:
+            if st.button(tr("✓ Pin letter", "✓ تثبيت الحرف"),
+                         key=f"btn_ok_commit_{lang}", width="stretch"):
+                st.session_state[f"commit_{lang}"] = True
+        with act_row[1]:
+            if st.button(tr("␣ New word", "␣ كلمة جديدة"),
+                         key=f"btn_new_word_{lang}", width="stretch"):
+                st.session_state[f"new_word_{lang}"] = True
+        with act_row[2]:
+            if st.button(tr("✕ Delete last", "✕ حذف آخر حرف"),
+                         key=f"wb_back_{lang}", width="stretch"):
+                _back_last()
+        with act_row[3]:
+            if st.button(tr("🗑 Clear", "🗑 مسح الكل"),
+                         key=f"wb_clr_{lang}", width="stretch"):
+                _clear_word()
+        tiles_ph = st.empty()
         sentence_ph = st.empty()
+        reveal_ph = st.empty()
         status_ph = st.empty()
-        audio_ph = st.empty()
         wave_ph = st.empty()
         history_ph = st.empty()
+        audio_ph = st.empty()
 
 
     @st.fragment(run_every=0.1)
@@ -616,18 +631,19 @@ with tab_live:
                 key="btn_dl_audio")
 
     st.divider()
-    st.markdown(tr(
-        "**How it works:** hold a sign for ≥ 5 consecutive frames with confidence ≥ 0.90 and a "
-        "top1−top2 margin ≥ 0.05 to commit a letter — or press **✓ Pin** to commit the shown "
-        "letter instantly (bypasses debounce/confidence). **␣ New word** closes the current word "
-        "immediately (same as the 2.5 s silence auto-close — both work). Completed words form a "
-        "separate list shown with clear spaces; Groq corrects the full sentence and the audio "
-        "speaks it with word pauses.",
-        "**كيف تعمل:** اعرض إشارة أمام الكاميرا ≥ 5 إطارات متتالية بثقة ≥ 0.90 مع "
-        "تحقّق هندسي ليُلتزم الحرف — أو اضغط **✓ تثبيت** لتُثبّت الحرف المعروض فوراً "
-        "(يتجاوز debounce/الثقة). زر **␣ كلمة جديدة** يغلق الكلمة الحالية فوراً (مثل آلية "
-        "الصمت 2.5 ثانية — كلاهما يعمل). الكلمات المكتملة تتراكم كقائمة منفصلة تُعرض بمسافات "
-        "واضحة؛ Groq يصحّح الجملة كاملة ويُنطقها الصوت بفواصل كلمات."))
+    with st.expander(tr("How it works (click to expand)", "كيف تعمل؟ (اضغط للتفاصيل)")):
+        st.markdown(tr(
+            "**How it works:** hold a sign for ≥ 5 consecutive frames with confidence ≥ 0.90 and a "
+            "top1−top2 margin ≥ 0.05 to commit a letter — or press **✓ Pin** to commit the shown "
+            "letter instantly (bypasses debounce/confidence). **␣ New word** closes the current word "
+            "immediately (same as the 2.5 s silence auto-close — both work). Completed words form a "
+            "separate list shown with clear spaces; Groq corrects the full sentence and the audio "
+            "speaks it with word pauses.",
+            "**كيف تعمل:** اعرض إشارة أمام الكاميرا ≥ 5 إطارات متتالية بثقة ≥ 0.90 مع "
+            "تحقّق هندسي ليُلتزم الحرف — أو اضغط **✓ تثبيت** لتُثبّت الحرف المعروض فوراً "
+            "(يتجاوز debounce/الثقة). زر **␣ كلمة جديدة** يغلق الكلمة الحالية فوراً (مثل آلية "
+            "الصمت 2.5 ثانية — كلاهما يعمل). الكلمات المكتملة تتراكم كقائمة منفصلة تُعرض بمسافات "
+            "واضحة؛ Groq يصحّح الجملة كاملة ويُنطقها الصوت بفواصل كلمات."))
 
 with tab_dict:
     st.title("Sign Language Dictionary" if IS_EN else "قاموس الإشارات")
@@ -795,12 +811,13 @@ with tab_wlive:
     words_loop()
 
     st.divider()
-    st.markdown(tr(
-        "**How it works:** English ISLR — MediaPipe two-hand landmarks are re-sampled to a fixed "
-        "40-frame window and classified by an LSTM. A hold a hand (~4 s) to fill the window, drop "
-        "it for 1 s to start a new word.",
-        "**كيف تعمل:** نظام ISLR إنجليزي مستقل — لاندماركات اليدين تُعاد عيناتها إلى نافذة 40 إطاراً "
-        "ثابتة ويصنّفها LSTM. أبقِ يدك (~4 ثوانٍ) لتمتلئ النافذة، ثم فارق يد 1 ثانية لبدء كلمة جديدة."))
+    with st.expander(tr("English-Words how it works (click to expand)", "كيف تعمل الكلمات؟ (اضغط للتفاصيل)")):
+        st.markdown(tr(
+            "**How it works:** English ISLR — MediaPipe two-hand landmarks are re-sampled to a fixed "
+            "40-frame window and classified by an LSTM. A hold a hand (~4 s) to fill the window, drop "
+            "it for 1 s to start a new word.",
+            "**كيف تعمل:** نظام ISLR إنجليزي مستقل — لاندماركات اليدين تُعاد عيناتها إلى نافذة 40 إطاراً "
+            "ثابتة ويصنّفها LSTM. أبقِ يدك (~4 ثوانٍ) لتمتلئ النافذة، ثم فارق يد 1 ثانية لبدء كلمة جديدة."))
 
 st.markdown(tr(
     "<div class='meta' style='margin-top:24px'>Arabic: val 95.18% · 32 ArASL signs · "
