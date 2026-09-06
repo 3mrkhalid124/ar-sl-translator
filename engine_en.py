@@ -435,6 +435,28 @@ class SignSequencerEN:
         self._last_idx = None
         self._votes = {}
 
+    def finalize_now(self):
+        """تحكم يدوي: يغلق الكلمة الحالية ويصفّر المخزن — يعيدها نصاً أو None (فورية، بلا صمت)."""
+        if not self.word:
+            return None
+        self._finalize()
+        return self.finalized_word
+
+    def force_commit(self, idx, conf=0.0):
+        """تحكم يدوي: يُثبّت الحرف المعروض فوراً بلا debounce ولا اشتراط ثقة (P2).
+        يحترم حد max_word ويُحدّث بوابة عدم-التكرار. يعيد events كبنية feed()."""
+        events = {"committed": None, "word": "".join(CLASS_EN_SYMS[i] for i in self.word), "finalized": None}
+        if self.word and len(self.word) >= self.max_word:
+            self._finalize()
+            events["finalized"] = self.finalized_word
+        self.word.append(idx)
+        self._committed_idx = idx
+        self._last_idx = idx
+        self._votes = {}
+        events["committed"] = (idx, CLASS_EN_SYMS[idx], conf or self._last_conf)
+        events["word"] = "".join(CLASS_EN_SYMS[i] for i in self.word)
+        return events
+
 
 class LivePipelineEN:
     """خط أنابيب إنجليزي كامل: detect+crop → CNN+margin → تسلسل → Groq(en) → gTTS(en)."""
@@ -536,6 +558,19 @@ def en_checks(check) -> None:
     check("en.seq.unknown.holds", ev["finalized"] is None and ev["word"] == "ABC")
     ev = seq.feed(False, None, 0.0, 7.00)         # اختفاء اليد → إنهاء بعد الصمت
     check("en.seq.finalize", ev["finalized"] == "ABC")
+
+    seq2 = SignSequencerEN(conf_threshold=0.0, debounce=3, silence_seconds=1.0, max_word=2)
+    ev = seq2.force_commit(0, 0.0)
+    check("en.seq.force_commit.fast", ev["committed"] is not None and ev["word"] == "A")
+    ev = seq2.force_commit(1, 0.0)
+    check("en.seq.force_commit.full", ev["finalized"] is None and ev["word"] == "AB")
+    ev = seq2.force_commit(2, 0.0)
+    check("en.seq.force_commit.overflow", ev["finalized"] == "AB" and ev["word"] == "C")
+    seq3 = SignSequencerEN(conf_threshold=0.0, debounce=3, silence_seconds=1.0)
+    seq3.feed(True, 2, 1.0, 0.10); seq3.feed(True, 2, 1.0, 0.20); seq3.feed(True, 2, 1.0, 0.30)
+    raw = seq3.finalize_now()
+    check("en.seq.finalize_now", raw == "C" and seq3.word == [])
+    check("en.seq.finalize_now.empty", seq3.finalize_now() is None)
 
     _, res_en = process_frame_en(None, 1)
     check("en.frame.empty", res_en["hand"] is False)

@@ -861,6 +861,31 @@ class SignSequencer:
         self._last_idx = None
         self._votes = {}
 
+    def finalize_now(self):
+        """تحكم يدوي: يغلق الكلمة الحالية ويصفّر المخزن — يعيدها نصاً أو None (فورية، بلا صمت)."""
+        if not self.word:
+            return None
+        self._finalize()
+        return self.finalized_word
+
+    def force_commit(self, idx, conf=0.0):
+        """تحكم يدوي: يُثبّت الحرف المعروض فوراً بلا debounce ولا اشتراط ثقة (P2).
+        يحترم حد max_word (يغلق الكلمة تلقائياً عند الامتلاء)، ويُحدّث بوابة عدم-التكرار
+        حتى لا يُعاد نفس الحرف تلقائياً. يعيد events كبنية feed()."""
+        events = {"committed": None, "word": "".join(CLASS_SYMS[i] for i in self.word), "finalized": None}
+        if self.word and len(self.word) >= self.max_word:
+            self._finalize()
+            events["finalized"] = self.finalized_word
+        self.word.append(idx)
+        self._committed_idx = idx
+        self._last_idx = idx
+        self._votes = {}
+        events["committed"] = (idx, CLASS_SYMS[idx], conf or self._last_conf)
+        events["word"] = "".join(CLASS_SYMS[i] for i in self.word)
+        _trace("force_commit", "idx=", idx, "conf=", f"{conf:.4f}", "word=", repr(events["word"]),
+               "finalized=", events["finalized"])
+        return events
+
 
 # ---------------------------------------------------------------- M7: Groq تصحيح
 
@@ -1054,6 +1079,23 @@ def run_selftest() -> int:
           and ev["word"] == CLASS_SYMS[2])
     ev = seq2.feed(False, None, 0.0, 7.00)   # اليد اختفت → إنهاء بعد الصمت
     check("seq.unknown.then_finalize", ev["finalized"] == CLASS_SYMS[2])
+
+    # ---- P2: تثبيت يدوي + إغلاق كلمة يدوي (فورية، بلا debounce/صمت) ----
+    seq3 = SignSequencer(conf_threshold=0.0, debounce=3, silence_seconds=1.0, max_word=2)
+    ev = seq3.force_commit(2, 0.0)            # ثبّت فوراً بلا votes
+    check("seq.force_commit.fast", ev["committed"] is not None and ev["word"] == CLASS_SYMS[2])
+    ev = seq3.force_commit(3, 0.0)            # امتلأ (max_word=2) → يغلق ويبدأ حرفاً جديداً
+    check("seq.force_commit.full", ev["finalized"] is None and ev["word"] == CLASS_SYMS[2] + CLASS_SYMS[3])
+    ev = seq3.force_commit(4, 0.0)
+    check("seq.force_commit.overflow", ev["finalized"] == CLASS_SYMS[2] + CLASS_SYMS[3]
+          and ev["word"] == CLASS_SYMS[4])
+    ev = seq3.feed(True, 4, 1.0, 0.10); ev = seq3.feed(True, 4, 1.0, 0.20); ev = seq3.feed(True, 4, 1.0, 0.30)
+    check("seq.force_commit.gate", ev["committed"] is None and ev["word"] == CLASS_SYMS[4])  # نفس الحرف لا يتكرر
+    seq4 = SignSequencer(conf_threshold=0.0, debounce=3, silence_seconds=1.0)
+    _ = seq4.feed(True, 2, 1.0, 0.10); _ = seq4.feed(True, 2, 1.0, 0.20); _ = seq4.feed(True, 2, 1.0, 0.30)
+    raw = seq4.finalize_now()                 # إغلاق يدوي فوري بلا صمت
+    check("seq.finalize_now", raw == CLASS_SYMS[2] and seq4.word == [])
+    check("seq.finalize_now.empty", seq4.finalize_now() is None)
 
     # ---- Polish9: أداء/تواقيت كاشف اليد (قياس فعلي لا تخمين) ----
     seq_ts = [_next_ts_ms(), _next_ts_ms(), _next_ts_ms(), _next_ts_ms()]

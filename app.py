@@ -348,6 +348,24 @@ with tab_live:
             pl.seq.clear()
         st.session_state.pop(f"rev_{lang}", None)
 
+    # P2+P3: مسار إغلاق موحّد (تلقائي عبر الصمت أو يدوي عبر الأزرار) — يُصحَّح ويُنطق ويُسجَّل في التاريخ.
+    def _correct_synth(raw):
+        if not raw:
+            return None, None
+        corr = engine.correct_word(raw, language="en") if IS_EN else engine.correct_word(raw)
+        aud = engine.synthesize_speech(corr["text"], lang="en" if IS_EN else "ar")
+        return corr, aud
+
+    def _on_finalized(raw, corrected, audio):
+        st.session_state[lkey] = raw
+        entry = (raw, corrected["text"], corrected["source"])
+        st.session_state[hkey].append(entry)
+        st.session_state[f"rev_{lang}"] = entry
+        if audio:
+            audio_ph.audio(audio, format="audio/mp3", autoplay=True)
+            st.session_state[f"aud_{lang}"] = audio
+            st.session_state[f"wav_{lang}"] = time.perf_counter()
+
     cam_col, res_col = st.columns([3, 4])
     with cam_col:
         cam_card = st.container(border=True)
@@ -363,6 +381,9 @@ with tab_live:
                             tr("Your letters", "حروفك المتراكمة") + "</div>", unsafe_allow_html=True)
             tiles_ph = tcols[1].empty()
             with tcols[2]:
+                if st.button(tr("✓ Pin letter", "✓ تثبيت الحرف"),
+                             key=f"btn_ok_commit_{lang}", width="stretch"):
+                    st.session_state[f"commit_{lang}"] = True
                 if st.button(tr("✕ Delete last", "✕ حذف آخر حرف"),
                              key=f"wb_back_{lang}", width="stretch"):
                     _back_last()
@@ -391,11 +412,28 @@ with tab_live:
         if not ok:
             return
         frame = engine.downscale_live(frame)
+
+        # P2: ثبّت يدوياً — يُلتزم الحرف المعروض فوراً بلا debounce/ثقة، ويفتح كلمة عند امتلائها.
+        if st.session_state.pop(f"commit_{lang}", False):
+            pl = st.session_state.get(pkey)
+            cand = st.session_state.get(f"cand_{lang}")
+            if pl is not None and cand and cand[0] is not None:
+                ev = pl.seq.force_commit(cand[0], cand[1])
+                if ev["finalized"]:
+                    corr, aud = _correct_synth(ev["finalized"])
+                    _on_finalized(ev["finalized"], corr, aud)
+            else:
+                status_ph.warning(tr("No letter to pin yet",
+                                     "لا حرف واضح للتثبيت بعد"))
+
         out = st.session_state[pkey].update(frame)
         if out.get("error"):
             st.session_state.live = False
             status_ph.error(out["error"])
             return
+        st.session_state[f"cand_{lang}"] = (
+            (int(out["idx"]), float(out["conf"]))
+            if out["hand"] and out["idx"] is not None and not out.get("unknown") else None)
         frame_ph.image(out["overlay"], channels="BGR", width="stretch", output_format="JPEG")
 
         if not out["hand"]:
@@ -469,15 +507,7 @@ with tab_live:
                 reveal_ph.markdown("")
 
         if out["events"]["finalized"] and out["events"]["finalized"] != st.session_state[lkey]:
-            st.session_state[lkey] = out["events"]["finalized"]
-            st.session_state[hkey].append(
-                (out["events"]["finalized"], out["corrected"]["text"], out["corrected"]["source"]))
-            st.session_state[f"rev_{lang}"] = (out["events"]["finalized"],
-                                               out["corrected"]["text"], out["corrected"]["source"])
-            if out["audio"]:
-                audio_ph.audio(out["audio"], format="audio/mp3", autoplay=True)
-                st.session_state[f"aud_{lang}"] = out["audio"]
-                st.session_state[f"wav_{lang}"] = time.perf_counter()
+            _on_finalized(out["events"]["finalized"], out["corrected"], out["audio"])
 
         wts = st.session_state.get(f"wav_{lang}")
         if wts and time.perf_counter() - wts < 4.5:
