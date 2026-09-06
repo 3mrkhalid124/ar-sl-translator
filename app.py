@@ -371,6 +371,10 @@ with tab_live:
         st.session_state.live = False
     if "cap" not in st.session_state:
         st.session_state.cap = None
+    if f"audgen_{lang}" not in st.session_state:
+        st.session_state[f"audgen_{lang}"] = 0
+        st.session_state[f"audgen_rendered_{lang}"] = 0
+        st.session_state[f"aud_{lang}"] = None
 
     col_ctrl = st.columns([1, 3])[0]
     with col_ctrl:
@@ -421,15 +425,33 @@ with tab_live:
         aud = engine.synthesize_speech(corr["text"], lang="en" if IS_EN else "ar")
         return corr, aud
 
+    def _new_audio(aud):
+        """يسجّل صوتاً جديداً (توليد جديد) فيجعله قائماً للعرض مرة واحدة فقط. أي نداء لاحق
+        بنفس التوليدة لا يكرر الصوت — هذا يُشبه «hash للآخر صوت» طلباً: عنصر st.audio بـ
+        autoplay لم يعد يُعاد إنشاؤه في كل دورة fragment لإيقاف التكرار الجنوني."""
+        st.session_state[f"aud_{lang}"] = aud
+        st.session_state[f"audgen_{lang}"] = st.session_state.get(f"audgen_{lang}", 0) + 1
+        st.session_state[f"wav_{lang}"] = time.perf_counter()
+
+    def _render_new_audio():
+        """يعرض عنصر الصوت فقط عند توليد صوت جديد فعلاً (تغيّر «التوليدة»)، لا في كل دورة fragment."""
+        gen = st.session_state.get(f"audgen_{lang}", 0)
+        if st.session_state.get(f"audgen_rendered_{lang}", -1) == gen:
+            return
+        aud = st.session_state.get(f"aud_{lang}")
+        if not aud:
+            return
+        audio_ph.audio(aud, format="audio/mp3", autoplay=True)
+        st.session_state[f"audgen_rendered_{lang}"] = gen
+
     def _on_finalized(raw, corrected, audio):
         st.session_state[lkey] = raw
         entry = (raw, corrected["text"], corrected["source"])
         st.session_state[hkey].append(entry)
         st.session_state[f"rev_{lang}"] = entry
         if audio:
-            audio_ph.audio(audio, format="audio/mp3", autoplay=True)
-            st.session_state[f"aud_{lang}"] = audio
-            st.session_state[f"wav_{lang}"] = time.perf_counter()
+            _new_audio(audio)
+        _render_new_audio()
 
     def _speak_letter(idx):
         """نطق فوري لاسم الحرف عند «تثبيت» — منفصل عن نطق الكلمة الكاملة عند الإغلاق."""
@@ -437,8 +459,8 @@ with tab_live:
                 else engine.CLASS_NAMES[idx])
         aud = engine.synthesize_speech(name, lang="en" if IS_EN else "ar")
         if aud:
-            audio_ph.audio(aud, format="audio/mp3", autoplay=True)
-            st.session_state[f"wav_{lang}"] = time.perf_counter()
+            _new_audio(aud)
+            _render_new_audio()
 
     def _show_cam_placeholder():
         """صندوق مبدّل متقطّع يظهر في عمود الكاميرا قبل بدء الالتقاط أو عند إيقافه."""
@@ -621,12 +643,14 @@ with tab_live:
         else:
             wave_ph.markdown("")
 
+        _render_new_audio()
+
         history_ph.markdown(_history_md(st.session_state[hkey], lang), unsafe_allow_html=True)
 
 
     live_loop()
 
-    if f"aud_{lang}" in st.session_state:
+    if st.session_state.get(f"aud_{lang}"):
         col_aud = st.columns([1, 4])[0]
         with col_aud:
             st.download_button(
