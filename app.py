@@ -143,6 +143,11 @@ h1 { font-size: 24px !important; line-height: 1.2; margin: 0 0 4px !important; }
         padding: 2px 12px; font-size: 20px; font-weight: 500; color: var(--text-primary); }
 .sent-sep { color: var(--text-secondary); }
 
+/* صندوق مكان الكاميرا الفارغ (يُظهر قبل بدء الالتقاط أو عند إيقاف الكاميرا) */
+.cam-empty { display: flex; align-items: center; justify-content: center; min-height: 220px;
+  border: 1.5px dashed var(--border); border-radius: 12px; color: var(--text-secondary);
+  font-size: 14px; text-align: center; background: var(--surface-card); box-sizing: border-box; }
+
 /* فقاعات كشف AI والتراكم */
 .reveal-stage { overflow: hidden; max-height: 72px; }
 .reveal-stage .rev-raw { display: flex; gap: 3px; }
@@ -435,6 +440,13 @@ with tab_live:
             audio_ph.audio(aud, format="audio/mp3", autoplay=True)
             st.session_state[f"wav_{lang}"] = time.perf_counter()
 
+    def _show_cam_placeholder():
+        """صندوق مبدّل متقطّع يظهر في عمود الكاميرا قبل بدء الالتقاط أو عند إيقافه."""
+        frame_ph.markdown(
+            ("<div class='cam-empty'>🎥<br>Camera off — press Start</div>" if IS_EN
+             else "<div class='cam-empty'>🎥<br>الكاميرا متوقفة — اضغط بدء</div>"),
+            unsafe_allow_html=True)
+
     # P2: عمودان ثابتان على شاشة قياسية — شمال: كاميرا فقط (مقيدة الارتفاع)،
     # يمين: الحرف + شريط الثقة + صف أزرار (✓/␣/✕/🗑) + البلاطات + السجل — معاً بلا سكرول.
     cam_col, res_col = st.columns([3, 4])
@@ -443,6 +455,8 @@ with tab_live:
         with cam_card:
             frame_ph = st.empty()
             hand_ph = st.empty()
+        if not st.session_state.get("live", False):
+            _show_cam_placeholder()
     with res_col:
         letter_ph = st.empty()
         conf_ph = st.empty()
@@ -503,10 +517,12 @@ with tab_live:
     @st.fragment(run_every=0.1)
     def live_loop():
         if not st.session_state.get("live", False):
+            _show_cam_placeholder()
             return
         cap = st.session_state.cap
         if cap is None or not cap.isOpened():
             st.session_state.live = False
+            _show_cam_placeholder()
             status_ph.error(tr("Camera unavailable", "الكاميرا غير متاحة"))
             return
         ok, frame = cap.read()
