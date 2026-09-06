@@ -8,7 +8,6 @@ import time
 from pathlib import Path
 
 import cv2
-import numpy as np
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -123,7 +122,6 @@ h1, h2, h3 { color: var(--text-primary) !important; font-weight: 500; }
   object-fit: contain; min-height: 92px; }
 .dict-name { font-weight: 500; color: var(--text-primary); margin-top: 6px; font-size: 18px; }
 .dict-cat { color: var(--text-secondary); font-size: 12px; margin-top: 4px; }
-.dict-sym { color: var(--text-secondary); font-size: 14px; }
 
 .stImage img { max-height: 380px; width: auto !important; margin: 0 auto; display: block; object-fit: contain; }
 

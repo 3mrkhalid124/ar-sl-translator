@@ -462,11 +462,6 @@ def _augment_batch(xb: np.ndarray, rng) -> np.ndarray:
     return out
 
 
-def _augment_train(x: np.ndarray, y: np.ndarray, rng):
-    """يطبق _augment_batch بأزواج (x,y) — يستخدمه train_cnn و train_en معاً."""
-    return _augment_batch(x, rng), y
-
-
 def classify_softmax(patch: np.ndarray):
     """same as classify لكن يُرجع أيضاً (top1−top2) margin — يُستخدم للـ margin-check."""
     import torch

@@ -520,7 +520,6 @@ class LivePipelineEN:
 
 def en_checks(check) -> None:
     """فحوص en.* تُدمج في --selftest العربي عبر engine.run_selftest (دالة check تُمرَّر)."""
-    from pathlib import Path as _P
     check("en.artifacts.npz", ASL_MNIST_NPZ.exists())
     check("en.artifacts.model", MODEL_EN_PATH.exists())
     check("en.artifacts.class_map", CLASS_MAP_EN_PATH.exists())
