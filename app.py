@@ -685,6 +685,29 @@ with tab_dict:
         with cols[i % 4]:
             st.markdown(card, unsafe_allow_html=True)
 
+    if IS_EN:
+        st.markdown(
+            "<div style='text-align:center;margin:22px 0 10px;color:var(--text-primary);"
+            "font-weight:600'>Common words — ISLR reference</div>",
+            unsafe_allow_html=True)
+        _WDIR = Path("data") / "asl_signs" / "dict_words"
+        _WCLS = ["bye", "drink", "happy", "hello", "no", "please", "sleep", "thankyou", "water", "yes"]
+        _wcols = st.columns(5)
+        for _wi, _wsign in enumerate(_WCLS):
+            _wp = _WDIR / f"{_wsign}.png"
+            _wuri = ("data:image/png;base64," + base64.b64encode(_wp.read_bytes()).decode()
+                     if _wp.exists() else None)
+            _wcard = "<div class='dict-card'>"
+            if _wuri:
+                _wcard += f"<img src='{_wuri}' alt='{_wsign}' loading='lazy'/>"
+            else:
+                _wcard += ("<div style='height:110px;display:flex;align-items:center;"
+                           "justify-content:center;color:var(--text-secondary);font-size:12px'>"
+                           "no image</div>")
+            _wcard += f"<div class='dict-name'>{_wsign}</div></div>"
+            with _wcols[_wi % 5]:
+                st.markdown(_wcard, unsafe_allow_html=True)
+
 
 # ---- بند 4: «كلمات إنجليزية» — نظام رابع منفصل (engine_words_en.py) — تحميل كسول، لا يمس الثلاثة العليا ----
 @st.cache_resource
