@@ -467,6 +467,24 @@ class LivePipelineEN:
         self.t0 = time.monotonic()
         self.auto_correct = auto_correct
         self._profiler = ar.FrameProfiler(tag="en") if enable_profile else None
+        self.words = []
+        self.sentence = ""
+
+    def push_word(self, raw: str):
+        """P3: يسجّل كلمة مكتملة ويحقّق الجملة كاملة (تصحيح Groq لكل الكلمات + نطق بمسافات)."""
+        if not raw:
+            return None
+        self.words.append(raw)
+        self.sentence = " ".join(self.words)
+        corrected = (ar.correct_word(self.sentence, language="en") if self.auto_correct
+                     else {"text": self.sentence, "source": "raw", "api": False})
+        audio = ar.synthesize_speech(corrected["text"], lang="en")
+        return {"raw": raw, "sentence": self.sentence, "corrected": corrected, "audio": audio}
+
+    def reset_words(self):
+        """P3: إعادة تعيين كلمات/جملة مكتملة."""
+        self.words = []
+        self.sentence = ""
 
     def update(self, frame):
         """إطار BGR → result + events + word + (corrected/audio عند الإنهاء) + error (أو None).
@@ -477,12 +495,13 @@ class LivePipelineEN:
             overlay, result = process_frame_en(frame, ar._next_ts_ms(), prof)
             events = self.seq.feed(result["hand"], result["idx"], result["conf"], ts)
             out = {**result, "events": events, "overlay": overlay, "timings": prof,
-                   "word": events["word"], "corrected": None, "audio": None, "error": None}
+                   "word": events["word"], "corrected": None, "audio": None, "error": None,
+                   "words": list(self.words), "sentence": self.sentence}
             if events["finalized"]:
-                out["corrected"] = (ar.correct_word(events["finalized"], language="en")
-                                    if self.auto_correct
-                                    else {"text": events["finalized"], "source": "raw", "api": False})
-                out["audio"] = ar.synthesize_speech(out["corrected"]["text"], lang="en")
+                r = self.push_word(events["finalized"])
+                if r:
+                    out["corrected"], out["audio"] = r["corrected"], r["audio"]
+                out["words"], out["sentence"] = list(self.words), self.sentence
             if self._profiler:
                 self._profiler.note(prof)
             return out
@@ -493,6 +512,7 @@ class LivePipelineEN:
                     "events": {"committed": None, "word": "", "finalized": None},
                     "overlay": np.zeros((240, 320, 3), dtype=np.uint8), "word": "",
                     "timings": {}, "corrected": None, "audio": None,
+                    "words": list(self.words), "sentence": self.sentence,
                     "error": f"Failed to process frame ({exc}) — check camera and EN model."}
 
 
@@ -571,6 +591,16 @@ def en_checks(check) -> None:
     raw = seq3.finalize_now()
     check("en.seq.finalize_now", raw == "C" and seq3.word == [])
     check("en.seq.finalize_now.empty", seq3.finalize_now() is None)
+
+    pl3 = LivePipelineEN(auto_correct=False)
+    r = pl3.push_word("WORLD")
+    check("en.p3.push.one", r and r["sentence"] == "WORLD" and r["corrected"]["text"] == "WORLD")
+    r = pl3.push_word("PEACE")
+    check("en.p3.push.sentence", r and r["sentence"] == "WORLD PEACE"
+          and r["corrected"]["source"] == "raw")
+    check("en.p3.words.list", pl3.words == ["WORLD", "PEACE"])
+    pl3.reset_words()
+    check("en.p3.reset", pl3.words == [] and pl3.sentence == "")
 
     _, res_en = process_frame_en(None, 1)
     check("en.frame.empty", res_en["hand"] is False)

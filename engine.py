@@ -969,6 +969,25 @@ class LivePipeline:
         self.t0 = time.monotonic()
         self.auto_correct = auto_correct
         self._profiler = FrameProfiler(tag="ar") if enable_profile else None
+        self.words = []   # كلمات مكتملة منفصلة — تُعرض وتُنطق بمسافات واضحة (P3)
+        self.sentence = ""
+
+    def push_word(self, raw: str):
+        """P3: يسجّل كلمة مكتملة في قائمة words ويحقّق الجملة كاملة (تصحيح Groq على كل الكلمات
+        مجتمعة + نطق الجملة بمسافات). أداة يدوية وتلقائية (الصمت) في مسار واحد. بلا كلمة → None."""
+        if not raw:
+            return None
+        self.words.append(raw)
+        self.sentence = " ".join(self.words)
+        corrected = (correct_word(self.sentence) if self.auto_correct
+                     else {"text": self.sentence, "source": "raw", "api": False})
+        audio = synthesize_speech(corrected["text"])
+        return {"raw": raw, "sentence": self.sentence, "corrected": corrected, "audio": audio}
+
+    def reset_words(self):
+        """P3: إعادة تعيين كلمات/جملة مكتملة (يستدعيها مسح الكل)."""
+        self.words = []
+        self.sentence = ""
 
     def update(self, frame):
         """إطار BGR → result + events + word + (corrected/audio عند الإنهاء) + error (أو None).
@@ -979,11 +998,13 @@ class LivePipeline:
             overlay, result = process_frame(frame, _next_ts_ms(), prof)
             events = self.seq.feed(result["hand"], result["idx"], result["conf"], ts)
             out = {**result, "events": events, "overlay": overlay, "timings": prof, "word": events["word"],
-                   "corrected": None, "audio": None, "error": None}
+                   "corrected": None, "audio": None, "error": None,
+                   "words": list(self.words), "sentence": self.sentence}
             if events["finalized"]:
-                out["corrected"] = (correct_word(events["finalized"]) if self.auto_correct
-                                    else {"text": events["finalized"], "source": "raw", "api": False})
-                out["audio"] = synthesize_speech(out["corrected"]["text"])
+                r = self.push_word(events["finalized"])
+                if r:
+                    out["corrected"], out["audio"] = r["corrected"], r["audio"]
+                out["words"], out["sentence"] = list(self.words), self.sentence
             if self._profiler:
                 self._profiler.note(prof)
             return out
@@ -995,6 +1016,7 @@ class LivePipeline:
                     "events": {"committed": None, "word": "", "finalized": None},
                     "overlay": np.zeros((240, 320, 3), dtype=np.uint8), "word": "",
                     "timings": {}, "corrected": None, "audio": None,
+                    "words": list(self.words), "sentence": self.sentence,
                     "error": f"تعذّرت معالجة الإطار ({exc}) — تحقق من الكاميرا والنموذج."}
 
 
@@ -1096,6 +1118,20 @@ def run_selftest() -> int:
     raw = seq4.finalize_now()                 # إغلاق يدوي فوري بلا صمت
     check("seq.finalize_now", raw == CLASS_SYMS[2] and seq4.word == [])
     check("seq.finalize_now.empty", seq4.finalize_now() is None)
+
+    # ---- P3: كلمات منفصلة + جملة بمسافات (تصحيح Groq على الجملة كاملة — بلا مفتاح → raw) ----
+    pl3 = LivePipeline(auto_correct=False)
+    r = pl3.push_word("سلام")
+    check("p3.push.one", r and r["sentence"] == "سلام" and r["corrected"]["text"] == "سلام")
+    r = pl3.push_word("عليكم")
+    check("p3.push.sentence", r and r["sentence"] == "سلام عليكم"
+          and r["corrected"]["source"] == "raw")
+    check("p3.words.list", pl3.words == ["سلام", "عليكم"])
+    pl3.reset_words()
+    check("p3.reset", pl3.words == [] and pl3.sentence == "")
+    pl3b = LivePipeline(auto_correct=False)
+    r = pl3b.push_word("")
+    check("p3.push.empty", r is None)
 
     # ---- Polish9: أداء/تواقيت كاشف اليد (قياس فعلي لا تخمين) ----
     seq_ts = [_next_ts_ms(), _next_ts_ms(), _next_ts_ms(), _next_ts_ms()]

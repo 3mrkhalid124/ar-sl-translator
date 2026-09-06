@@ -98,6 +98,13 @@ h1, h2, h3 { color: var(--text-primary) !important; font-weight: 500; }
 .tile-spacer { width: 0; flex: none; }
 .tile-count { color: var(--text-secondary); font-size: 12px; }
 
+/* صف جملة الكلمات المنفصلة (P3): شرائح كلمات + مسافات واضحة عند العرض */
+.sent-wrap { margin-top: 8px; }
+.sent-row { display: flex; gap: 6px; align-items: center; justify-content: center; flex-wrap: wrap; }
+.sent-row .wordchip { background: var(--surface-card); border: 1px solid var(--border); border-radius: 8px;
+        padding: 2px 12px; font-size: 20px; font-weight: 500; color: var(--text-primary); }
+.sent-sep { color: var(--text-secondary); }
+
 /* فقاعات كشف AI والتراكم */
 .reveal-stage .rev-raw { display: flex; gap: 3px; }
 .reveal-stage .rev-raw .tile { width: 26px; height: 34px; font-size: 18px; border-color: var(--border); }
@@ -206,6 +213,20 @@ def _tile_md(word, lang):
             slots.append("<span class='tile-spacer'></span>")
     return f"<div class='word-stage'><div class='tilerow'>{''.join(slots)}</div>" \
            f"<div class='tile-count'>{len(word)}/{_MAX_TILES}</div></div>"
+
+
+def _sentence_md(words, lang):
+    """الجملة كقائمة كلمات منفصلة (P3): شرائح بمسافات واضحة + سطر النص المتصل تحتها."""
+    if not words:
+        return ("<div class='meta'>No words yet — sign, then ␣ / silence</div>"
+                if IS_EN else "<div class='meta'>لا كلمات بعد — أشر، ثم ␣ / الصمت</div>")
+    chips = []
+    for i, w in enumerate(words):
+        if i:
+            chips.append("<span class='sent-sep'>␣</span>")
+        chips.append(f"<span class='wordchip'>{w}</span>")
+    return ("<div class='sent-wrap'><div class='sent-row'>" + "".join(chips) + "</div>"
+            f"<div class='meta'>{' '.join(words)}</div></div>")
 
 
 def _reveal_md(rev, lang):
@@ -346,6 +367,8 @@ with tab_live:
         pl = st.session_state.get(pkey)
         if pl is not None and getattr(pl, "seq", None) is not None:
             pl.seq.clear()
+            if hasattr(pl, "reset_words"):
+                pl.reset_words()
         st.session_state.pop(f"rev_{lang}", None)
 
     # P2+P3: مسار إغلاق موحّد (تلقائي عبر الصمت أو يدوي عبر الأزرار) — يُصحَّح ويُنطق ويُسجَّل في التاريخ.
@@ -384,6 +407,9 @@ with tab_live:
                 if st.button(tr("✓ Pin letter", "✓ تثبيت الحرف"),
                              key=f"btn_ok_commit_{lang}", width="stretch"):
                     st.session_state[f"commit_{lang}"] = True
+                if st.button(tr("␣ New word", "␣ كلمة جديدة"),
+                             key=f"btn_new_word_{lang}", width="stretch"):
+                    st.session_state[f"new_word_{lang}"] = True
                 if st.button(tr("✕ Delete last", "✕ حذف آخر حرف"),
                              key=f"wb_back_{lang}", width="stretch"):
                     _back_last()
@@ -393,6 +419,7 @@ with tab_live:
     with res_col:
         letter_ph = st.empty()
         reveal_ph = st.empty()
+        sentence_ph = st.empty()
         status_ph = st.empty()
         audio_ph = st.empty()
         wave_ph = st.empty()
@@ -425,6 +452,18 @@ with tab_live:
             else:
                 status_ph.warning(tr("No letter to pin yet",
                                      "لا حرف واضح للتثبيت بعد"))
+
+        # P3: كلمة جديدة يدوياً — يغلق الكلمة الحالية فوراً ويبدأ غيرها (بجانب الصمت التلقائي).
+        if st.session_state.pop(f"new_word_{lang}", False):
+            pl = st.session_state.get(pkey)
+            if pl is not None:
+                raw = pl.seq.finalize_now()
+                if raw:
+                    r = pl.push_word(raw)
+                    if r:
+                        _on_finalized(raw, r["corrected"], r["audio"])
+            else:
+                st.session_state[f"new_word_{lang}"] = True  # أعدها — الأنبوب ليس جاهزاً
 
         out = st.session_state[pkey].update(frame)
         if out.get("error"):
@@ -509,6 +548,8 @@ with tab_live:
         if out["events"]["finalized"] and out["events"]["finalized"] != st.session_state[lkey]:
             _on_finalized(out["events"]["finalized"], out["corrected"], out["audio"])
 
+        sentence_ph.markdown(_sentence_md(out.get("words", []), lang), unsafe_allow_html=True)
+
         wts = st.session_state.get(f"wav_{lang}")
         if wts and time.perf_counter() - wts < 4.5:
             wave_ph.markdown(_wave_md(), unsafe_allow_html=True)
@@ -534,12 +575,16 @@ with tab_live:
     st.divider()
     st.markdown(tr(
         "**How it works:** hold a sign for ≥ 5 consecutive frames with confidence ≥ 0.90 and a "
-        "top1−top2 margin ≥ 0.05 to commit a letter (unclear → shown). Then hold no hand for 2.5 s "
-        "to lock the word and speak it (auto Groq correction when a key is set).",
+        "top1−top2 margin ≥ 0.05 to commit a letter — or press **✓ Pin** to commit the shown "
+        "letter instantly (bypasses debounce/confidence). **␣ New word** closes the current word "
+        "immediately (same as the 2.5 s silence auto-close — both work). Completed words form a "
+        "separate list shown with clear spaces; Groq corrects the full sentence and the audio "
+        "speaks it with word pauses.",
         "**كيف تعمل:** اعرض إشارة أمام الكاميرا ≥ 5 إطارات متتالية بثقة ≥ 0.90 مع "
-        "تحقّق هندسي (ألف/سين/فاء/ثاء معتمدة عند التحقق) ليُلتزم الحرف. إن عارضت الهندسة "
-        "تصنيف CNN يُعرض «غير معروف» بدل حرف مخطئ. ثم انتظر بلا يد 2.5 ثانية لتُقفل "
-        "الكلمة وتُنطق (مع تصحيح Groq التلقائي إن توفّر)."))
+        "تحقّق هندسي ليُلتزم الحرف — أو اضغط **✓ تثبيت** لتُثبّت الحرف المعروض فوراً "
+        "(يتجاوز debounce/الثقة). زر **␣ كلمة جديدة** يغلق الكلمة الحالية فوراً (مثل آلية "
+        "الصمت 2.5 ثانية — كلاهما يعمل). الكلمات المكتملة تتراكم كقائمة منفصلة تُعرض بمسافات "
+        "واضحة؛ Groq يصحّح الجملة كاملة ويُنطقها الصوت بفواصل كلمات."))
 
 with tab_dict:
     st.title("Sign Language Dictionary" if IS_EN else "قاموس الإشارات")
