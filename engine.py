@@ -872,6 +872,12 @@ class SignSequencer:
         يحترم حد max_word (يغلق الكلمة تلقائياً عند الامتلاء)، ويُحدّث بوابة عدم-التكرار
         حتى لا يُعاد نفس الحرف تلقائياً. يعيد events كبنية feed()."""
         events = {"committed": None, "word": "".join(CLASS_SYMS[i] for i in self.word), "finalized": None}
+        if self._committed_idx == idx:
+            # بوابة ضد ازدواج «تثبيت»: نفس الحرف مُلتزم ولم يُصفَّر (backspace/clear/غياب اليد)
+            # → إلغاء صامت — ضغطة واحدة = حرف واحد بالضبط.
+            _trace("force_commit", "BLOCKED dupe idx=", idx,
+                   "word=", repr(events["word"]), "finalized=", events["finalized"])
+            return events
         if self.word and len(self.word) >= self.max_word:
             self._finalize()
             events["finalized"] = self.finalized_word
@@ -1124,6 +1130,12 @@ def run_selftest() -> int:
           and ev["word"] == CLASS_SYMS[4])
     ev = seq3.feed(True, 4, 1.0, 0.10); ev = seq3.feed(True, 4, 1.0, 0.20); ev = seq3.feed(True, 4, 1.0, 0.30)
     check("seq.force_commit.gate", ev["committed"] is None and ev["word"] == CLASS_SYMS[4])  # نفس الحرف لا يتكرر
+    ev = seq3.force_commit(4, 0.0)
+    check("seq.force_commit.dupe_gate", ev["committed"] is None and ev["word"] == CLASS_SYMS[4])  # تثبيت مكرر → ممنوع
+    seq3.backspace()
+    ev = seq3.force_commit(4, 0.0)
+    check("seq.force_commit.dupe_after_backspace", ev["committed"] is not None
+          and ev["word"] == CLASS_SYMS[4])  # الحذف يصفّر البوابة → يُسمح بنفس الحرف مجدداً
     seq4 = SignSequencer(conf_threshold=0.0, debounce=3, silence_seconds=1.0)
     _ = seq4.feed(True, 2, 1.0, 0.10); _ = seq4.feed(True, 2, 1.0, 0.20); _ = seq4.feed(True, 2, 1.0, 0.30)
     raw = seq4.finalize_now()                 # إغلاق يدوي فوري بلا صمت

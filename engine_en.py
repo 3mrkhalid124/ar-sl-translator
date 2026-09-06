@@ -449,6 +449,9 @@ class SignSequencerEN:
         """تحكم يدوي: يُثبّت الحرف المعروض فوراً بلا debounce ولا اشتراط ثقة (P2).
         يحترم حد max_word ويُحدّث بوابة عدم-التكرار. يعيد events كبنية feed()."""
         events = {"committed": None, "word": "".join(CLASS_EN_SYMS[i] for i in self.word), "finalized": None}
+        if self._committed_idx == idx:
+            # بوابة ضد ازدواج «تثبيت»: نفس الحرف مُلتزم ولم يُصفَّر → إلغاء صامت (ضغطة = حرف واحد).
+            return events
         if self.word and len(self.word) >= self.max_word:
             self._finalize()
             events["finalized"] = self.finalized_word

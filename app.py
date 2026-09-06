@@ -462,6 +462,32 @@ with tab_live:
         history_ph = st.empty()
         audio_ph = st.empty()
 
+    # P2/P3: التزام حرف/كلمة يدوي — يُعالَج فوراً مرة واحدة في نفس rerun الضغطة (خارج الـfragment
+    # الذي يعمل كل 0.1s) حتى لا تُعالَج ضغطة واحدة مرتين فينتسخ الحرف. البوابة في force_commit
+    # تمنع إضافة نفس الحرف مرتين حتى لو وصل النداء متأخراً.
+    if st.session_state.pop(f"commit_{lang}", False):
+        pl = st.session_state.get(pkey)
+        cand = st.session_state.get(f"cand_{lang}")
+        if pl is not None and cand and cand[0] is not None:
+            ev = pl.seq.force_commit(cand[0], cand[1])
+            if ev["finalized"]:
+                corr, aud = _correct_synth(ev["finalized"])
+                _on_finalized(ev["finalized"], corr, aud)
+        else:
+            status_ph.warning(tr("No letter to pin yet",
+                                 "لا حرف واضح للتثبيت بعد"))
+
+    if st.session_state.pop(f"new_word_{lang}", False):
+        pl = st.session_state.get(pkey)
+        if pl is not None:
+            raw = pl.seq.finalize_now()
+            if raw:
+                r = pl.push_word(raw)
+                if r:
+                    _on_finalized(raw, r["corrected"], r["audio"])
+        else:
+            status_ph.warning(tr("Pipeline not ready", "خط الأنابيب غير جاهز"))
+
 
     @st.fragment(run_every=0.1)
     def live_loop():
@@ -476,31 +502,6 @@ with tab_live:
         if not ok:
             return
         frame = engine.downscale_live(frame)
-
-        # P2: ثبّت يدوياً — يُلتزم الحرف المعروض فوراً بلا debounce/ثقة، ويفتح كلمة عند امتلائها.
-        if st.session_state.pop(f"commit_{lang}", False):
-            pl = st.session_state.get(pkey)
-            cand = st.session_state.get(f"cand_{lang}")
-            if pl is not None and cand and cand[0] is not None:
-                ev = pl.seq.force_commit(cand[0], cand[1])
-                if ev["finalized"]:
-                    corr, aud = _correct_synth(ev["finalized"])
-                    _on_finalized(ev["finalized"], corr, aud)
-            else:
-                status_ph.warning(tr("No letter to pin yet",
-                                     "لا حرف واضح للتثبيت بعد"))
-
-        # P3: كلمة جديدة يدوياً — يغلق الكلمة الحالية فوراً ويبدأ غيرها (بجانب الصمت التلقائي).
-        if st.session_state.pop(f"new_word_{lang}", False):
-            pl = st.session_state.get(pkey)
-            if pl is not None:
-                raw = pl.seq.finalize_now()
-                if raw:
-                    r = pl.push_word(raw)
-                    if r:
-                        _on_finalized(raw, r["corrected"], r["audio"])
-            else:
-                st.session_state[f"new_word_{lang}"] = True  # أعدها — الأنبوب ليس جاهزاً
 
         out = st.session_state[pkey].update(frame)
         if out.get("error"):
