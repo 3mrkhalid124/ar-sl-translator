@@ -11,7 +11,7 @@ models/*
 !models/class_map.json
 !models/class_map_en.json
 !models/words_en_classes.json
-assets/
+# assets/* كاملة مطلوبة وقت التشغيل (hand_landmarker.task + صور القاموس) فتُتتبع ولا تُتجاهل
 logs/
 *.log
 .pytest_cache/
