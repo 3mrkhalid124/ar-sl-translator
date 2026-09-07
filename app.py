@@ -9,6 +9,7 @@ from pathlib import Path
 
 import cv2
 import streamlit as st
+from streamlit.runtime.scriptrunner import get_script_run_ctx
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import engine
@@ -521,14 +522,9 @@ with tab_live:
         sentence_ph = st.empty()
         reveal_ph = st.empty()
         status_ph = st.empty()
-        status_ph.markdown("")  # حجز موضع ثابت لكتابات الـfragment اللاحقة (نفس قاعدة audio_ph)
         wave_ph = st.empty()
         history_ph = st.empty()
         audio_ph = st.empty()
-        # Streamlit: fragment يكتب لحاوية أُنشئت خارجَه فقط إذا كُتب فيها (حجزُ موضعٍ) في جولةٍ
-        # كاملةٍ سابقة؛ audio_ph لا يُكتب في جولات عادية (يُكتب فقط عند وجود صوت جديد) لذا
-        # نحجزه كل جولة بعنصر فارغ — وإلا انهار التطبيق أولَ غلقٍ تلقائي من داخل fragment.
-        audio_ph.markdown("")
 
     # P2/P3: التزام حرف/كلمة يدوي — يُعالَج فوراً مرة واحدة في نفس rerun الضغطة (خارج الـfragment
     # الذي يعمل كل 0.1s) حتى لا تُعالَج ضغطة واحدة مرتين فينتسخ الحرف. البوابة في force_commit
@@ -561,6 +557,15 @@ with tab_live:
 
     @st.fragment(run_every=0.1)
     def live_loop():
+        # Streamlit: الـfragment يكتب إلى مواضع خارجية — ولا يُسمح بذلك في تيكة fragment مستقلة
+        # إلا إذا كُتب الموضع في جولة كاملةٍ أولاً (حجز slot مستقر). التنفيذ inline في كل جولة
+        # كاملة، لذا نحجز كل المواضع بعنصر فارغ في الجولات الكاملة فقط (fragment_ids_this_run فارغ
+        # فيها) — فيعاد الحجز فور إعادة إنشاء المواضع برمز كائن جديد، ولا رعشة في تيكات الـ0.1s.
+        _run_ctx = get_script_run_ctx()
+        if _run_ctx is not None and not _run_ctx.fragment_ids_this_run:
+            for _ph in (frame_ph, hand_ph, letter_ph, conf_ph, tiles_ph, sentence_ph,
+                        wave_ph, history_ph, reveal_ph, status_ph, audio_ph):
+                _ph.markdown("")
         if not st.session_state.get("live", False):
             _show_cam_placeholder()
             return
@@ -833,10 +838,14 @@ if IS_EN:
             ws_word = st.empty()
             ws_conf = st.empty()
             ws_status = st.empty()
-            ws_status.markdown("")  # حجز موضع ثابت لكتابات الـfragment اللاحقة (نفس قاعدة audio_ph)
 
         @st.fragment(run_every=0.1)
         def words_loop():
+            # نفس التعامل: حجز المواضع الخارجية في الجولات الكاملة حتى تحمل تيكات الـfragment المستقلة.
+            _run_ctx = get_script_run_ctx()
+            if _run_ctx is not None and not _run_ctx.fragment_ids_this_run:
+                for _ph in (ws_frame, ws_word, ws_conf, ws_status):
+                    _ph.markdown("")
             if not st.session_state.get(wlive, False):
                 return
             cap = st.session_state.get(wcap)
