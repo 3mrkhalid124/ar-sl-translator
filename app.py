@@ -521,9 +521,14 @@ with tab_live:
         sentence_ph = st.empty()
         reveal_ph = st.empty()
         status_ph = st.empty()
+        status_ph.markdown("")  # حجز موضع ثابت لكتابات الـfragment اللاحقة (نفس قاعدة audio_ph)
         wave_ph = st.empty()
         history_ph = st.empty()
         audio_ph = st.empty()
+        # Streamlit: fragment يكتب لحاوية أُنشئت خارجَه فقط إذا كُتب فيها (حجزُ موضعٍ) في جولةٍ
+        # كاملةٍ سابقة؛ audio_ph لا يُكتب في جولات عادية (يُكتب فقط عند وجود صوت جديد) لذا
+        # نحجزه كل جولة بعنصر فارغ — وإلا انهار التطبيق أولَ غلقٍ تلقائي من داخل fragment.
+        audio_ph.markdown("")
 
     # P2/P3: التزام حرف/كلمة يدوي — يُعالَج فوراً مرة واحدة في نفس rerun الضغطة (خارج الـfragment
     # الذي يعمل كل 0.1s) حتى لا تُعالَج ضغطة واحدة مرتين فينتسخ الحرف. البوابة في force_commit
@@ -828,6 +833,7 @@ if IS_EN:
             ws_word = st.empty()
             ws_conf = st.empty()
             ws_status = st.empty()
+            ws_status.markdown("")  # حجز موضع ثابت لكتابات الـfragment اللاحقة (نفس قاعدة audio_ph)
 
         @st.fragment(run_every=0.1)
         def words_loop():
