@@ -2,7 +2,11 @@
 __pycache__/
 *.pyc
 .env
-data/
+# data/ بكامله غير مُتتبَّع إلا ملف مقياس كلمات اليد المطلوب وقت التشغيل
+data/*
+!data/asl_signs/
+data/asl_signs/*
+!data/asl_signs/words_en_scaler.json
 # نعمّل ملفات الاستدلال فقط (قصيرة الحجم) ولا نتتبع النسخ الاحتياطية ولا نقاط الاستئناف
 models/*
 !models/cnn.pt
