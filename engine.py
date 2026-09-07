@@ -1,11 +1,4 @@
-"""محرّك مترجم لغة الإشارة العربية — كل المنطق (لا شيء من الواجهة هنا).
 
-USAGE (أدوات تحقق ذاتي في الطرفية):
-  python engine.py --fetch-data     # M2: نزّل+تحقق+استخرج الداتا وصور القاموس (npz مخزَّن)
-  python engine.py --train          # M3: تدريب CNN + حفظ checkpoint + class_map.json
-  python engine.py --camera         # M4: اختبار مباشر للكاميرا + كشف اليد + تنصيف CNN
-  python engine.py --selftest       # تشغيل كل الاختبارات الصغيرة المتاحة (بدون إنترنت/كاميرا)
-"""
 
 import json
 import logging
@@ -238,15 +231,14 @@ def extract_dictionary_samples() -> None:
 MODEL_PATH = MODELS_DIR / "cnn.pt"
 CLASS_MAP_PATH = MODELS_DIR / "class_map.json"
 TRAIN_FRAC = 0.85
-MAX_EPOCHS = 3  # أقصى عدد epochs في هذه الجلسة الواحدة (توقف مبكر عند val ≥ 0.95)
+MAX_EPOCHS = 3 
 BATCH_SIZE = 512
-LR = 2e-3
+LR = 2e-3   
 TARGET_VAL_ACC = 0.95
-CPU_THREADS = 6  # قياس: MKL أسرع عند 6 خيوط (نوى فيزيائية) على i7-10850H
+CPU_THREADS = 6
 
 
 def _build_cnn():
-    """معمارية CNN العربية (1×64×64 → 32 class). تُستورد من engine_en مع استبدال رأسها فقط."""
     import torch.nn as nn
 
     class CNN(nn.Module):
@@ -550,8 +542,7 @@ ENG_LABELS = [
     "Sad", "Seen", "Sheen", "Taa", "Tta", "Thaal", "Thal", "Ta-Marb", "Waw",
     "Yaa-Ha", "Yaa", "Zayn",
 ]
-HAND_PAD = 1.4  # هامش حول كف اليد قبل التكبير — يقارب نسبة اليد لعين الصور التدريبية
-
+HAND_PAD = 1.4  
 
 def normalize_live(norm: np.ndarray) -> np.ndarray:
     """مواءمة قطبية لقطة اليد الحية نحو مظهر التدريب (خلفية مشرقة) — IRON بلا إعادة سطوع.
@@ -598,13 +589,13 @@ def detect_hand(frame, ts_ms: int):
     return result.hand_landmarks[0] if result and result.hand_landmarks else []
 
 
-# فهارس مفاصل اليد (MediaPipe)
+
 _LM = {"wrist": 0, "thumb_mcp": 2, "thumb_ip": 3, "thumb_tip": 4,
        "index_mcp": 5, "index_pip": 6, "index_tip": 8,
        "middle_pip": 10, "middle_tip": 12,
        "ring_pip": 14, "ring_tip": 16,
        "pinky_pip": 18, "pinky_tip": 20}
-_FINGER_LINKS = [  # (pip, tip) لكل إصبع بترتيب: سبابة/وسطى/بنصر/خنصر
+_FINGER_LINKS = [
     (_LM["index_pip"], _LM["index_tip"]),
     (_LM["middle_pip"], _LM["middle_tip"]),
     (_LM["ring_pip"], _LM["ring_tip"]),
