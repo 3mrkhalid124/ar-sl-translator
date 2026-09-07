@@ -1,5 +1,4 @@
-opencv-python==4.14.0.94
-opencv-contrib-python==4.14.0.94
+opencv-python-headless==4.14.0.94
 mediapipe==1.0.1
 torch==2.14.0
 scikit-learn==1.9.0
