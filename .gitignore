@@ -3,7 +3,14 @@ __pycache__/
 *.pyc
 .env
 data/
-models/
+# نعمّل ملفات الاستدلال فقط (قصيرة الحجم) ولا نتتبع النسخ الاحتياطية ولا نقاط الاستئناف
+models/*
+!models/cnn.pt
+!models/cnn_en.pt
+!models/words_en.keras
+!models/class_map.json
+!models/class_map_en.json
+!models/words_en_classes.json
 assets/
 logs/
 *.log
